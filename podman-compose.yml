@@ -1,0 +1,96 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: docker.io/pgvector/pgvector:pg16
+    container_name: codeintel-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: codeintel
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: docker.io/redis:7-alpine
+    container_name: codeintel-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  ollama:
+    image: docker.io/ollama/ollama:latest
+    container_name: codeintel-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_models:/root/.ollama
+    environment:
+      - OLLAMA_HOST=0.0.0.0
+    restart: unless-stopped
+
+  api:
+    build: .
+    image: codeintel-api:latest
+    container_name: codeintel-api
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://postgres:password@postgres:5432/codeintel
+      - REDIS_HOST=redis
+      - OLLAMA_URL=http://ollama:11434
+      # - LLM_MODEL=tinyllama   # instead of phi3:mini
+      # - LLM_MODEL=phi3:mini
+      # - LLM_MODEL=deepseek-coder:1.3b
+      - LLM_MODEL=iodose/nuextract-v1.5:3.8b-q6_K
+      - LLM_TEMPERATURE=0.0
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      ollama:
+        condition: service_started
+    volumes:
+      - ./src:/app/src
+      - ./data:/app/data
+      - ./prompts:/app/prompts:ro   # read-only
+    command: ["uv", "run", "python", "-m", "src", "serve", "--host", "0.0.0.0", "--port", "8000"]
+    restart: unless-stopped
+
+  worker:
+    build: .
+    image: codeintel-worker:latest
+    container_name: codeintel-worker
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://postgres:password@postgres:5432/codeintel
+      - REDIS_HOST=redis
+      - OLLAMA_URL=http://ollama:11434
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./src:/app/src
+    command: ["uv", "run", "rq", "worker", "ingestion"]
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+  ollama_models:

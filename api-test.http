@@ -1,0 +1,6 @@
+
+### Test API Endpoints
+
+curl -X POST http://localhost:8000/query \
+  -H "Content-Type: application/json" \
+  -d '{"rule": "dead_code"}'

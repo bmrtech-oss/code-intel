@@ -1,0 +1,19 @@
+Extract information from the following code analysis and populate the provided JSON schema. Do not include any extra text, explanation, or markdown formatting.
+
+Code Analysis:
+Symbols: {{symbols}}
+Calls: {{calls}}
+
+JSON Schema:
+{
+  "epic": "High-level goal",
+  "feature": "Specific capability",
+  "user_story": "As a ... I want ... so that ...",
+  "acceptance_criteria": ["Criterion 1", "Criterion 2"],
+  "tasks": [
+    {
+      "text": "Task description",
+      "traceability": ["function:example"]
+    }
+  ]
+}

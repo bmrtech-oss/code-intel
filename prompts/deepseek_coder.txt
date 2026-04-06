@@ -1,0 +1,16 @@
+Generate a JSON requirement document from the provided code analysis. Use exactly the schema below. Output only valid JSON, no markdown, no explanation.
+
+Schema:
+{{
+  "epic": "string",
+  "feature": "string",
+  "user_story": "As a ... I want ... so that ...",
+  "acceptance_criteria": ["string"],
+  "tasks": [{{"text": "string", "traceability": ["string"]}}]
+}}
+
+Code symbols:
+{{symbols}}
+
+Calls:
+{{calls}}

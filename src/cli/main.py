@@ -1,0 +1,95 @@
+import typer
+import uvicorn
+import asyncio
+import re
+from typing import Optional
+from ..core.storage import VersionedStorage, AsyncSessionLocal
+from ..core.ingestion import IngestionPipeline
+from ..core.git_handler import GitRepoHandler
+from ..api.server import app as fastapi_app
+
+app = typer.Typer()
+
+def is_git_url(path: str) -> bool:
+    """Check if the path is a Git repository URL."""
+    return bool(re.match(r'^(https?://|git@)', path))
+
+@app.command()
+def analyze(
+    repo_path: str,
+    version: Optional[str] = None,
+    branch: Optional[str] = None,
+    depth: Optional[int] = None,
+    no_cleanup: bool = False
+):
+    """Index a local directory or a remote Git repository."""
+    temp_repo = None
+    try:
+        if is_git_url(repo_path):
+            typer.echo(f"Cloning Git repository: {repo_path}")
+            handler = GitRepoHandler(repo_path, branch, depth)
+            actual_path = handler.clone()
+            temp_repo = handler
+            typer.echo(f"Cloned to {actual_path}")
+        else:
+            actual_path = repo_path
+            handler = None
+
+        typer.echo(f"Analyzing {actual_path}...")
+        if version is None:
+            import time
+            version = str(int(time.time()))
+
+        async def _run():
+            async with AsyncSessionLocal() as session:
+                storage = VersionedStorage(session)
+                pipeline = IngestionPipeline(storage)
+                await pipeline.walk_and_parse(actual_path, version)
+                await session.commit()
+                typer.echo(f"Indexed with version {version}")
+
+        asyncio.run(_run())
+
+    finally:
+        if temp_repo and not no_cleanup:
+            temp_repo.cleanup()
+            typer.echo("Cleaned up temporary clone.")
+
+@app.command()
+def trace(requirement_id: str):
+    """Show source code symbols linked to a requirement."""
+    import httpx
+    resp = httpx.get(f"http://localhost:8000/trace/{requirement_id}")
+    if resp.status_code == 200:
+        data = resp.json()
+        typer.echo(f"Requirement: {data['requirement_id']}")
+        for sym in data['symbols']:
+            typer.echo(f"  {sym['symbol_id']} - {sym['file']}")
+    else:
+        typer.echo("Requirement not found.")
+
+@app.command()
+def query(rule: str, version: Optional[str] = None, symbol: Optional[str] = None, depth: int = 3):
+    """Run an analysis rule (use API for full results)."""
+    typer.echo(f"Running rule '{rule}'...")
+    typer.echo("For detailed results, use the API endpoint /query")
+
+@app.command()
+def requirements(version: Optional[str] = None):
+    """Generate requirements (use API for full output)."""
+    typer.echo("Generating requirements...")
+    typer.echo("Use the API endpoint /requirements for JSON output")
+
+@app.command()
+def serve(host: str = "0.0.0.0", port: int = 8000):
+    """Start the REST API server."""
+    uvicorn.run(fastapi_app, host=host, port=port)
+
+@app.command()
+def mcp():
+    """Start the MCP server for Claude Code."""
+    from ..mcp.server import main as mcp_main
+    asyncio.run(mcp_main())
+
+if __name__ == "__main__":
+    app()

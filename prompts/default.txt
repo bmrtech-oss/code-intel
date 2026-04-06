@@ -1,0 +1,16 @@
+Based on the following code analysis, produce a JSON object with the fields: epic, feature, user_story, acceptance_criteria (list), tasks (list of objects with text and traceability). Output only the JSON.
+
+Symbols:
+{{symbols}}
+
+Calls:
+{{calls}}
+
+Example:
+{{
+  "epic": "...",
+  "feature": "...",
+  "user_story": "...",
+  "acceptance_criteria": ["..."],
+  "tasks": [{{"text": "...", "traceability": ["..."]}}]
+}}

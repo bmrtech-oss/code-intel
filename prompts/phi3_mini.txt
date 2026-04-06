@@ -1,0 +1,21 @@
+You are an expert business analyst. Based on the following code analysis, generate a structured requirement (epic, feature, user story, acceptance criteria, tasks) in JSON.
+
+Symbols:
+{{symbols}}
+
+Calls:
+{{calls}}
+
+Output format (strict JSON, no extra text):
+{{
+  "epic": "High-level goal (e.g., 'Modernize Payment Processing')",
+  "feature": "Specific capability (e.g., 'Idempotent Payment API')",
+  "user_story": "As a [role], I want [action] so that [benefit]",
+  "acceptance_criteria": ["Criterion 1", "Criterion 2"],
+  "tasks": [
+    {{
+      "text": "Task description",
+      "traceability": ["function:example"]
+    }}
+  ]
+}}
