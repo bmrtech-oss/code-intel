@@ -10,7 +10,7 @@ class TypeScriptVisitor:
         self.current_scope = []
         self.source_text = ""
         # Basic module name from file path
-        module_name = os.path.splitext(file_path)[0].replace(os.path.sep, ".")
+        module_name = os.path.splitext(file_path)[0].replace("\\", ".").replace("/", ".")
         if module_name.startswith("src."):
             module_name = module_name[4:]
         self.module_name = module_name
