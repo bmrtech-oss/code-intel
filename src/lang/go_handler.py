@@ -15,11 +15,22 @@ class GoVisitor:
             src = f.read()
         self.source_text = src
         parser = get_parser("go")
-        tree = parser.parse(src)
+        tree = self._parse_source(parser, src)
         root = tree.root_node() if callable(getattr(tree, "root_node", None)) else tree.root_node
         # First pass to find package name
         self._find_package(root)
         await self._visit(root)
+
+    def _parse_source(self, parser, src: str):
+        try:
+            return parser.parse(src)
+        except TypeError:
+            pass
+        try:
+            return parser.parse(src.encode("utf-8"))
+        except TypeError:
+            source_bytes = src.encode("utf-8")
+            return parser.parse(lambda start, end: source_bytes[start:end])
 
     def _find_package(self, node):
         if self._node_kind(node) == "package_clause":
