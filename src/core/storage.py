@@ -56,6 +56,17 @@ class VersionedStorage:
         result = await self.session.execute(text("SELECT MAX(version) FROM facts"))
         return result.scalar()
 
-    async def execute_query(self, query: str, params: tuple) -> List[Dict]:
+    async def execute_query(self, query: str, params: dict) -> List[Dict]:
         result = await self.session.execute(text(query), params)
+        return [dict(row) for row in result.mappings().all()]
+
+    async def semantic_search(self, query_vector: List[float], version: str, limit: int = 5) -> List[Dict]:
+        query = """
+        SELECT entity_id, attribute, value, version, (embedding <=> :qv) as distance
+        FROM facts
+        WHERE version = :v AND embedding IS NOT NULL
+        ORDER BY distance ASC
+        LIMIT :limit
+        """
+        result = await self.session.execute(text(query), {"qv": str(query_vector), "v": version, "limit": limit})
         return [dict(row) for row in result.mappings().all()]
