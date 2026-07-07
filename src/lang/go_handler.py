@@ -107,8 +107,17 @@ class GoVisitor:
             await self._visit(child)
 
     def _iter_children(self, node):
-        for i in range(node.child_count()):
-            yield node.child(i)
+        child_count = getattr(node, "child_count", None)
+        if callable(child_count):
+            child_count = child_count()
+        if child_count is None:
+            child_count = len(getattr(node, "children", []) or [])
+        if callable(getattr(node, "child", None)):
+            for i in range(child_count or 0):
+                yield node.child(i)
+        else:
+            for child in getattr(node, "children", []) or []:
+                yield child
 
     def _find_child_by_kind(self, node, kind):
         for child in self._iter_children(node):
@@ -136,10 +145,19 @@ class GoVisitor:
         return 1
 
     def _node_value(self, node, attr):
-        value = getattr(node, attr, None)
-        if callable(value):
-            try:
-                return value()
-            except TypeError:
-                return None
-        return value
+        candidates = [attr]
+        if attr == "kind":
+            candidates.append("type")
+        elif attr == "type":
+            candidates.append("kind")
+
+        for candidate in candidates:
+            value = getattr(node, candidate, None)
+            if callable(value):
+                try:
+                    return value()
+                except TypeError:
+                    return None
+            if value is not None:
+                return value
+        return None
