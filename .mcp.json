@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "code-intel": {
+      "command": "uv",
+      "args": [
+        "run",
+        "python",
+        "-m",
+        "src.mcp_server"
+      ],
+      "env": {
+        "DATABASE_URL": "${DATABASE_URL:-postgresql+asyncpg://postgres:password@localhost:5432/codeintel}",
+        "REDIS_HOST": "${REDIS_HOST:-localhost}"
+      }
+    }
+  }
+}
