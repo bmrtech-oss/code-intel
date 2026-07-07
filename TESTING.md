@@ -201,7 +201,17 @@ Claude should invoke the `query_dead_code` tool and return results.
 
 ---
 
-## 9. Performance & Load Testing (Optional)
+## 9. Graph Engine Benchmarking
+
+Run the Git-DAG engine comparison script to benchmark the ancestry lookback query and edge-filtering flow:
+
+```bash
+uv run python scripts/evaluate_graph_engines.py --runs 5
+```
+
+This writes a markdown report to [docs/engine_benchmark_results.md](docs/engine_benchmark_results.md). The benchmark uses synthetic commit and code-edge data to emulate the planned topological query path and compares Memtrace with TerminusDB. The CI workflow runs a one-iteration smoke test of this script automatically.
+
+## 10. Performance & Load Testing (Optional)
 
 - Use `ab` or `wrk` to stress the `/query` endpoint.
 - Monitor container resource usage: `podman stats`.
@@ -209,7 +219,7 @@ Claude should invoke the `query_dead_code` tool and return results.
 
 ---
 
-## 10. Troubleshooting Common Issues
+## 11. Troubleshooting Common Issues
 
 | Issue | Likely Fix |
 |-------|-------------|

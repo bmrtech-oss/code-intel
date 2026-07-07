@@ -38,6 +38,16 @@ podman exec -it codeintel-ollama ollama pull phi3:mini
 	curl -X POST http://localhost:8000/requirements
 	```
 
+## Graph Engine Benchmarking
+
+To compare the mock Git-DAG query path for Memtrace and TerminusDB, run:
+
+```bash
+uv run python scripts/evaluate_graph_engines.py --runs 5
+```
+
+The script launches lightweight container-backed mock servers, populates them with synthetic commit and code-edge data, executes a topological ancestry lookup plus an edge filter, and writes a markdown comparison report to [docs/engine_benchmark_results.md](docs/engine_benchmark_results.md). CI also runs a smoke-test version of this workflow to keep the benchmark path covered automatically.
+
 ## Production Considerations
 
 - Replace `postgres` with Azure Database for PostgreSQL Flexible Server.
