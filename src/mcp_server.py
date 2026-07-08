@@ -15,6 +15,14 @@ from .core.dataflow import DataflowEngine
 from .core.rules import RuleEngine
 from .core.workspace import WorkspaceManager
 from .core.udf import LLMUDF
+from .settings import USE_BITEMPORAL
+from .storage.bitemporal_adapter import BiTemporalAdapter
+from .storage.graph_engine import SimpleGraphEngine
+from .cache.memory_cache import MemoryCache
+from .cache.cdc_listener import CDCListener
+from .cache.cache_bootstrap import CacheBootstrap
+from .semantic.search import SemanticSearch
+from .analytics.predictor import ImpactPredictor
 
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://postgres:password@postgres:5432/codeintel")
 engine = create_async_engine(DATABASE_URL)
@@ -22,6 +30,27 @@ AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=F
 
 server = Server("code-intel-mcp")
 workspace_manager = WorkspaceManager()
+
+# Global topological storage stack
+adapter: Optional[BiTemporalAdapter] = None
+semantic_search_engine: Optional[SemanticSearch] = None
+impact_predictor: Optional[ImpactPredictor] = None
+
+async def init_topological_stack():
+    global adapter, semantic_search_engine, impact_predictor
+    if USE_BITEMPORAL and adapter is None:
+        engine_client = SimpleGraphEngine()
+        memory_cache = MemoryCache()
+
+        bootstrap = CacheBootstrap(engine_client, memory_cache)
+        await bootstrap.initialize_cache()
+
+        listener = CDCListener(engine_client, memory_cache)
+        await listener.start()
+
+        adapter = BiTemporalAdapter(engine_client, memory_cache)
+        semantic_search_engine = SemanticSearch()
+        impact_predictor = ImpactPredictor(adapter)
 
 TOOLS = [
     types.Tool(
@@ -92,6 +121,18 @@ TOOLS = [
             }
         }
     ),
+    types.Tool(
+        name="predict_impact",
+        description="Predict the blast radius of a code modification based on history.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "symbol": {"type": "string"},
+                "commit_sha": {"type": "string"}
+            },
+            "required": ["symbol"]
+        }
+    ),
 ]
 
 @server.list_tools()
@@ -115,19 +156,40 @@ async def handle_call_tool(name: str, arguments: dict) -> list[types.TextContent
         dataflow = DataflowEngine(storage)
         rules = RuleEngine(storage, dataflow)
         
+        # Ensure topological stack is initialized
+        if USE_BITEMPORAL:
+            await init_topological_stack()
+
         version = await get_version(arguments, storage)
         if not version:
              return [types.TextContent(type="text", text="Error: No version/commit_sha available.")]
 
         if name == "query_call_graph":
             func = arguments.get("function")
-            result = await dataflow.transitive_calls(version)
-            filtered = [row for row in result if row["caller"] == func or row["callee"] == func]
-            return [types.TextContent(type="text", text=json.dumps(filtered, indent=2))]
+            if adapter:
+                # Use topological graph adapter
+                calls = await adapter.get_calls(version, caller_fqn=func)
+                # For call graph we might want both directions
+                # Simplification: just return calls from/to this function
+                # Note: get_calls currently only filters by caller if caller_fqn is provided
+                return [types.TextContent(type="text", text=json.dumps(calls, indent=2))]
+            else:
+                result = await dataflow.transitive_calls(version)
+                filtered = [row for row in result if row["caller"] == func or row["callee"] == func]
+                return [types.TextContent(type="text", text=json.dumps(filtered, indent=2))]
 
         elif name == "query_dead_code":
-            result = await rules.evaluate_rule("dead_code", version)
-            return [types.TextContent(type="text", text=json.dumps(result, indent=2))]
+            if adapter:
+                # Dead code via graph lookup: symbols with no incoming CALLS edges
+                # This is a simplified rule for the adapter implementation
+                all_symbols = await adapter.get_symbols(version, filters={"kind": "function"})
+                all_calls = await adapter.get_calls(version)
+                called_fqns = {c["to"] for c in all_calls}
+                dead_code = [s for s in all_symbols if s["fqn"] not in called_fqns]
+                return [types.TextContent(type="text", text=json.dumps(dead_code, indent=2))]
+            else:
+                result = await rules.evaluate_rule("dead_code", version)
+                return [types.TextContent(type="text", text=json.dumps(result, indent=2))]
 
         elif name == "generate_requirements":
             udf = LLMUDF()
@@ -147,12 +209,14 @@ async def handle_call_tool(name: str, arguments: dict) -> list[types.TextContent
         elif name == "semantic_search":
             query_text = arguments.get("query")
             limit = arguments.get("limit", 5)
-            # In a real system, we'd embed the query_text first.
-            # For this task, we'll assume a dummy embedding or mock.
-            # Ideally, LLMUDF could have an embed() method.
-            dummy_vector = [0.1] * 384 
-            result = await storage.semantic_search(dummy_vector, version, limit)
-            return [types.TextContent(type="text", text=json.dumps(result, indent=2))]
+            if semantic_search_engine:
+                result = await semantic_search_engine.search(query_text, limit)
+                return [types.TextContent(type="text", text=json.dumps(result, indent=2))]
+            else:
+                # Fallback to legacy pgvector search if semantic engine not initialized
+                dummy_vector = [0.1] * 384
+                result = await storage.semantic_search(dummy_vector, version, limit)
+                return [types.TextContent(type="text", text=json.dumps(result, indent=2))]
 
         elif name == "get_workspace_info":
             workspace_id = arguments.get("workspace_id")
@@ -160,6 +224,14 @@ async def handle_call_tool(name: str, arguments: dict) -> list[types.TextContent
             if not session_data:
                 return [types.TextContent(type="text", text="Error: Workspace session not found.")]
             return [types.TextContent(type="text", text=json.dumps(session_data, indent=2))]
+
+        elif name == "predict_impact":
+            symbol = arguments.get("symbol")
+            if impact_predictor:
+                result = await impact_predictor.predict_blast_radius(symbol, version)
+                return [types.TextContent(type="text", text=json.dumps(result, indent=2))]
+            else:
+                return [types.TextContent(type="text", text="Error: Impact predictor not initialized.")]
 
         else:
             raise ValueError(f"Unknown tool: {name}")

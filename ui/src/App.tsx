@@ -1,8 +1,9 @@
 import { useWorkspaceStore } from './store/workspaceStore';
 import { GitBranch, Share2, MessageSquare } from 'lucide-react';
+import GraphExplorer from './GraphExplorer';
 
 function App() {
-  const { currentBranch, currentSha } = useWorkspaceStore();
+  const { currentBranch, currentSha, ancestors, setCurrentSha } = useWorkspaceStore();
 
   return (
     <div className="flex h-screen w-full bg-gray-900 text-white overflow-hidden">
@@ -15,11 +16,15 @@ function App() {
         <div className="flex-1 p-4 overflow-y-auto">
           <div className="text-sm text-gray-400 mb-2">Current Branch: {currentBranch || 'N/A'}</div>
           <div className="text-xs text-gray-500 truncate">SHA: {currentSha || 'N/A'}</div>
-          {/* Mock history rail */}
+          {/* History rail */}
           <div className="mt-4 space-y-2">
-            {[1, 2, 3].map(i => (
-              <div key={i} className="p-2 bg-gray-800 rounded text-xs cursor-pointer hover:bg-gray-700">
-                Commit {i} ...
+            {ancestors.map(sha => (
+              <div
+                key={sha}
+                onClick={() => setCurrentSha(sha)}
+                className={`p-2 rounded text-xs cursor-pointer hover:bg-gray-700 ${currentSha === sha ? 'bg-blue-600' : 'bg-gray-800'}`}
+              >
+                {sha}
               </div>
             ))}
           </div>
@@ -32,9 +37,8 @@ function App() {
           <Share2 size={18} />
           <span className="font-semibold">Graph Explorer</span>
         </div>
-        <div className="flex-1 relative bg-black flex items-center justify-center">
-          <span className="text-gray-600 italic">Graph View Placeholder</span>
-          {/* Future Cytoscape/Sigma.js integration */}
+        <div className="flex-1 relative bg-black">
+          <GraphExplorer />
         </div>
       </div>
 

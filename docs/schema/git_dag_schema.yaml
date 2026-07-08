@@ -3,57 +3,68 @@ nodes:
   - Commit:
       description: "A Git commit in the repository's history."
       properties:
-        sha: 
+        sha:
           type: string
           description: "Full SHA-1 hash of the commit."
-        parents: 
+        parents:
           type: list[string]
           description: "List of parent commit SHAs."
-        branch: 
+        branch:
           type: string
           description: "The branch name at the time of the commit."
-        author: 
+        author:
           type: string
           description: "Author of the commit."
-        date: 
+        date:
           type: string
           description: "ISO-8601 timestamp of the commit."
   - DefNode:
       description: "A structural code entity (function, class, method, etc.)."
       properties:
-        id: 
+        id:
           type: string
           description: "Unique structural identifier (e.g., FQN + content hash)."
-        kind: 
+        kind:
           type: string
           description: "Entity type (function, class, method, file, module)."
-        fqn: 
+        fqn:
           type: string
           description: "Fully Qualified Name."
-        file: 
+        file:
           type: string
           description: "Path to the file containing this definition."
-        introduced_in: 
+        introduced_in:
           type: string
           description: "The Git commit SHA where this node was first discovered."
-        modified_in: 
+        modified_in:
           type: list[string]
           description: "Array of commit SHAs tracking internal content mutations."
-        deleted_in: 
+        deleted_in:
           type: string
           description: "The commit SHA where the node was removed (null if active)."
   - FileNode:
       description: "A file in the repository."
       properties:
-        path: 
+        path:
           type: string
           description: "File path relative to repo root."
-        introduced_in: 
+        introduced_in:
           type: string
           description: "Commit SHA where the file was added."
-        deleted_in: 
+        deleted_in:
           type: string
           description: "Commit SHA where the file was deleted (null if active)."
+  - RemoteReference:
+      description: "A reference to a code entity in an external repository."
+      properties:
+        id:
+          type: string
+        repo_url:
+          type: string
+        ref_sha:
+          type: string
+        exposed_interface:
+          type: string
 
 edges:
   - CALLS:
@@ -61,10 +72,10 @@ edges:
       to: DefNode
       description: "A call relationship between two code entities."
       properties:
-        introduced_in: 
+        introduced_in:
           type: string
           description: "Commit SHA where the call was first detected."
-        deleted_in: 
+        deleted_in:
           type: string
           description: "Commit SHA where the call was removed."
   - CONTAINS:
@@ -72,13 +83,17 @@ edges:
       to: DefNode
       description: "Structural containment of definitions within a file."
       properties:
-        introduced_in: 
+        introduced_in:
           type: string
           description: "Commit SHA where the definition was added to the file."
-        deleted_in: 
+        deleted_in:
           type: string
           description: "Commit SHA where the definition was removed from the file."
   - PARENT_OF:
       from: Commit
       to: Commit
       description: "Git commit ancestry relationship."
+  - IMPORTS_FROM:
+      from: DefNode
+      to: RemoteReference
+      description: "Cross-repository dependency link."

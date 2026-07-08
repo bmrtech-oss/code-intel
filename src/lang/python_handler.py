@@ -40,6 +40,16 @@ class PythonVisitor:
             return f"{self.module_name}.{name}"
         return f"{self.module_name}.{'.'.join(self.current_scope)}.{name}"
 
+    def _extract_docstring(self, node):
+        body = node.child_by_field_name("body")
+        if body:
+            first_child = next(self._iter_children(body), None)
+            if first_child and self._node_kind(first_child) == "expression_statement":
+                expr = next(self._iter_children(first_child), None)
+                if expr and self._node_kind(expr) == "string":
+                    return self._node_text(expr).strip('\'" ')
+        return None
+
     async def _visit(self, node):
         kind = self._node_kind(node)
         if kind == "class_definition":
@@ -48,7 +58,11 @@ class PythonVisitor:
                 name = self._node_text(name_node)
                 fqn = self._get_fqn(name)
                 line = self._node_line(name_node)
+                docstring = self._extract_docstring(node)
+
                 await self.storage.insert_symbol(self.file_path, fqn, "class", line, self.version)
+                if docstring:
+                    await self.storage.insert_fact("symbol", f"class:{fqn}", "docstring", docstring, self.version)
 
                 self.current_scope.append(name)
                 for child in self._iter_children(node):
@@ -63,7 +77,17 @@ class PythonVisitor:
                 fqn = self._get_fqn(name)
                 line = self._node_line(name_node)
                 kind_name = "method" if self.current_scope else "function"
+                docstring = self._extract_docstring(node)
+
+                # Extract signature (parameters)
+                params_node = node.child_by_field_name("parameters")
+                signature = self._node_text(params_node) if params_node else ""
+
                 await self.storage.insert_symbol(self.file_path, fqn, kind_name, line, self.version)
+                if docstring:
+                    await self.storage.insert_fact("symbol", f"{kind_name}:{fqn}", "docstring", docstring, self.version)
+                if signature:
+                    await self.storage.insert_fact("symbol", f"{kind_name}:{fqn}", "signature", signature, self.version)
 
                 self.current_scope.append(name)
                 for child in self._iter_children(node):
@@ -80,6 +104,15 @@ class PythonVisitor:
 
                 if self._node_kind(function_node) == "attribute":
                     await self.storage.insert_fact("dynamic_call", f"{caller}->{callee}", "type", "cross-file-candidate", self.version)
+
+        elif kind == "import_from_statement":
+            module_node = node.child_by_field_name("module_name")
+            if module_node:
+                module_name = self._node_text(module_node)
+                # If it's not a local import, it's a cross-repo candidate
+                # This is a simplification; normally we'd check if module_name is in our indexed set
+                caller = ".".join([self.module_name] + self.current_scope)
+                await self.storage.insert_fact("cross_repo_import", f"{caller}->{module_name}", "module", module_name, self.version)
 
         for child in self._iter_children(node):
             await self._visit(child)

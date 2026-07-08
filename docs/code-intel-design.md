@@ -36,8 +36,10 @@ graph TB
     subgraph "Unified Data Plane"
         API[FastAPI]
         WS[Workspace Manager<br/>Redis Git-DAG]
-        Engine[Dataflow Engine<br/>SQL + Recursive CTEs]
-        Store[(PostgreSQL + pgvector<br/>Versioned Facts)]
+        Cache[Memory Cache<br/>O(1) Visibility]
+        Adapter[BiTemporalAdapter<br/>Topological Lookups]
+        Engine[Graph Engine<br/>Git-DAG Native]
+        Store[(PostgreSQL + JSONL<br/>Versioned Facts)]
     end
 
     subgraph "Ingestion Pipeline"
@@ -55,7 +57,10 @@ graph TB
     VSCode --> API
     MCP --> API
     API --> WS
-    WS --> Engine
+    API --> Cache
+    API --> Adapter
+    Adapter --> Cache
+    Adapter --> Engine
     Engine --> Store
     Walker --> Parser --> FactInserter --> Store
     API --> Ollama
@@ -82,7 +87,27 @@ sequenceDiagram
     Inserter-->>Walker: Next file
 ```
 
-### 2.2 Versioned Fact Storage (Git-DAG)
+### 2.2 Topological Data Migration
+
+To transition from legacy PostgreSQL to the Git-DAG model, the system uses a topological migration pipeline:
+- `export_postgres_to_jsonl.py`: Groups legacy facts by entity and maps their temporal lifecycle to `introduced_in`, `modified_in`, and `deleted_in`.
+- `import_jsonl_to_engine.py`: Ingests the flattened streams into graph-native engines.
+
+### 2.3 BiTemporal Visibility & Caching
+
+The `BiTemporalAdapter` provides a unified interface for code intelligence queries:
+- **Ancestry Lookback**: Traces the target commit's parents to define the visibility set.
+- **Topological Filtering**: Selects nodes/edges where `introduced_in` is in the ancestry and `deleted_in` is either null or outside the ancestry.
+- **Memory Cache Sidecar**: `MemoryCache` provides sub-millisecond lookups for the active workspace using set-based ancestry filtering.
+- **Synchronization**: `CDCListener` performs poll-based delta sync every 5 seconds to keep the cache fresh.
+
+### 2.4 Hybrid Semantic Search
+
+The semantic layer combines structural graph intelligence with vector embeddings:
+- **Indexing**: `SemanticIndexer` extracts headers, docstrings, and signatures, generating embeddings using `BAAI/bge-small-en-v1.5`.
+- **Hybrid Search**: `SemanticSearch` merges lexical keyword scores (BM25) with vector similarity distances.
+
+### 2.5 Versioned Fact Storage (Git-DAG)
 
 Instead of a rigid graph schema, we store **atomic facts** versioned by commit SHAs:
 
@@ -96,7 +121,7 @@ Instead of a rigid graph schema, we store **atomic facts** versioned by commit S
 
 This is **Git-native**: a query for a specific commit SHA filters facts where `introduced_in` is in the commit's ancestry and `deleted_in` is either NULL or not in the ancestry.
 
-### 2.3 Declarative Analysis via SQL Views
+### 2.6 Declarative Analysis via SQL Views
 
 All derived relationships are **materialised as SQL views** - no imperative graph traversal code.
 
@@ -119,7 +144,7 @@ WHERE s.kind = 'function'
   AND NOT EXISTS (SELECT 1 FROM transitive_calls WHERE callee = s.symbol_id);
 ```
 
-### 2.4 LLM as a User-Defined Function
+### 2.7 LLM as a User-Defined Function
 
 Requirements generation is not a separate microservice - it's a **UDF invoked from a query**:
 

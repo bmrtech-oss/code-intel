@@ -69,10 +69,34 @@ def trace(requirement_id: str):
         typer.echo("Requirement not found.")
 
 @app.command()
-def query(rule: str, version: Optional[str] = None, symbol: Optional[str] = None, depth: int = 3):
+def query(
+    rule: str,
+    version: Optional[str] = None,
+    commit: Optional[str] = None,
+    symbol: Optional[str] = None,
+    depth: int = 3
+):
     """Run an analysis rule (use API for full results)."""
-    typer.echo(f"Running rule '{rule}'...")
-    typer.echo("For detailed results, use the API endpoint /query")
+    import httpx
+    commit_sha = commit or version
+    typer.echo(f"Running rule '{rule}' for commit {commit_sha}...")
+
+    payload = {
+        "rule": rule,
+        "commit_sha": commit_sha,
+        "symbol": symbol,
+        "depth": depth
+    }
+
+    try:
+        import json
+        resp = httpx.post("http://localhost:8000/query", json=payload)
+        if resp.status_code == 200:
+            typer.echo(json.dumps(resp.json(), indent=2))
+        else:
+            typer.echo(f"Error: {resp.text}")
+    except Exception as e:
+        typer.echo(f"Failed to connect to API: {e}")
 
 @app.command()
 def requirements(version: Optional[str] = None):

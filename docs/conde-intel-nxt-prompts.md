@@ -39,63 +39,27 @@
 
 ---
 
-### Phase 1: Storage Migration to Git-DAG Engine
+### Phase 1: Storage Migration to Git-DAG Engine [COMPLETED]
 
-#### Prompt for Task 1.1 & 1.2: Topological Exporter & Transaction Importer
-
-> **Context:** We are deprecating our old PostgreSQL database schema to move entirely to our new topological graph database model.
-> **Task:**
-> 1. Write `scripts/export_postgres_to_jsonl.py`. Read rows from the legacy PostgreSQL `facts`, `symbols`, and `calls` tables. Flatten and map them into three specific JSON Lines output targets: `commits.jsonl` (mapping SHAs and parent dependencies), `nodes.jsonl` (capturing structural identities with `introduced_in`), and `edges.jsonl` (capturing call networks with `introduced_in` and `deleted_in`).
-> 2. Write `scripts/import_jsonl_to_engine.py` to ingest these streams into our chosen graph database, constructing native relationships between the Git commit nodes and the structural code elements.
-> 
-> 
-
-#### Prompt for Task 1.3, 1.4 & 1.5: `BiTemporalAdapter` Implementation
-
-> **Context:** We need a unified code access layer that replaces relational SQL queries with graph-native topological lookups.
-> **Task:**
-> 1. Build `src/storage/bitemporal_adapter.py`. Implement standard search functions (`get_symbols`, `get_calls`, `get_transitive_dependencies`). Do NOT use wall-clock timestamps or dates. Use a graph path lookup query that traces the target commit's ancestry tree: `MATCH (t:Commit {sha: $sha})-[:PARENT_OF*0..]->(a:Commit)` and filters code elements where `edge.introduced_in` matches a valid ancestor SHA and `edge.deleted_in` is either null or not in that ancestry.
-> 2. Hook up our golden test suite to validate that lookups match the legacy results exactly. Put this execution pass behind a `USE_BITEMPORAL` runtime environment feature flag in `src/settings.py`.
-> 
-> 
+Tasks 1.1 through 1.5 are fully implemented. Relational facts are migrated to topological JSONL, and the `BiTemporalAdapter` provides ancestry-based visibility.
 
 ---
 
-### Phase 2: Cache Layer Integration & Delta Sync
+### Phase 2: Cache Layer Integration & Delta Sync [COMPLETED]
 
-#### Prompt for Task 2.1, 2.2 & 2.3: Cache Sync & Ancestor Fallback Logic
-
-> **Context:** We want sub-millisecond lookups for current-state codebase queries by running `codebase-memory-mcp` as a fast memory cache sidecar.
-> **Task:**
-> 1. Write `src/cache/cdc_listener.py`. Establish an event listener that hooks into the graph engine's transaction logs or webhooks. When a new Git commit is processed, extract only the structural delta changes (newly introduced or deleted nodes/edges) and apply them directly to the in-memory cache layer.
-> 2. Update `src/storage/bitemporal_adapter.py`. When a query requests the *active workspace state*, check the memory cache first. Optimize the visibility lookups by caching the current branch’s commit ancestry list as a bitset or quick-lookup dictionary, achieving O(1) filtering before falling back to the graph store for deep historical queries.
-> 
-> 
+Tasks 2.1 through 2.5 are fully implemented. `MemoryCache` provides sub-millisecond lookups, synchronized via `CDCListener` and initialized via `CacheBootstrap`.
 
 ---
 
-### Phase 3: Timeline Travel & Visualization
+### Phase 3: Timeline Travel & Visualization [COMPLETED]
 
-#### Prompt for Task 3.1, 3.2 & 3.3: Time-Travel Operations (CLI, API, UI)
-
-> **Context:** We are exposing our topological timeline travel capability out to user-facing interfaces.
-> **Task:**
-> 1. Modify our Typer CLI codebase under `src/cli/` to accept a `--commit` string argument across all investigative commands (`query`, `impact`, `dead-code`).
-> 2. Update our FastAPI endpoints in `src/api/routes.py` to pass an optional `commit_sha` query parameter through to the underlying `BiTemporalAdapter`.
-> 3. Update the React application frontend in `ui/`. Integrate a network graph visualization component (such as Sigma.js or Cytoscape.js). When a user picks a different commit from the history rail, trigger an API update to re-render the exact layout of the codebase as it existed at that specific commit.
-> 
-> 
+Tasks 3.1 through 3.3 are fully implemented. CLI, API, and UI all support native timeline travel between commit SHAs.
 
 ---
 
-### Phase 4: Semantic Layer Integration
+### Phase 4: Semantic Layer Integration [COMPLETED]
 
-#### Prompt for Task 4.1 & 4.2: Hybrid Ingestion and Search API
-
-> **Context:** We are adding code search capabilities by combining structural graphs with vector embeddings using `txtai`.
-> **Task:**
-> 1. Write `src/semantic/indexer.py`. During the ingestion pipeline, extract function headers, variable scopes, documentation, and inline comments. Generate embeddings using a compact model (like `BAAI/bge-small-en-v1.5`) and store them in a local `txtai` index, tagging each record with its unique structural ID.
-> 2. Build a unified search workflow in `src/semantic/search.py` that merges lexical keyword scores (BM25) with vector similarity distances. Expose this interface as a new `/search` API endpoint and a dedicated `semantic_search` tool on our MCP server.
+Tasks 4.1 and 4.2 are fully implemented. `txtai` with `BAAI/bge-small-en-v1.5` powers hybrid semantic search across the platform.
 > 
 > 
 

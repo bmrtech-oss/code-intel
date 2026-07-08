@@ -45,6 +45,9 @@ graph TB
 
 - **Unified Fact Model**: All code data (symbols, calls, data flows) stored as versioned relational facts.
 - **Git-DAG Topological Schema**: Native support for branches, merges, and rebases using `introduced_in`, `modified_in`, and `deleted_in` metadata.
+- **Topological Cache**: Sub-millisecond current-state lookups using an optimized in-memory cache with background CDC/Polling sync.
+- **Timeline Travel**: High-performance historical queries and interactive graph visualization of code structure at any commit SHA.
+- **Hybrid Semantic Search**: Combines structural code identity with BGE-small embeddings via `txtai` for natural language code search.
 - **MCP-Native**: First-class Model Context Protocol (MCP) server for seamless integration with AI assistants like Claude Code.
 - **Declarative Analysis**: New analyses (e.g., dead code, impact) are simple SQL views, not complex code.
 - **LLM as a UDF**: Requirements generation is a first-class query inside the database flow.
@@ -55,18 +58,18 @@ graph TB
 sequenceDiagram
     participant Dev as Developer / AI Assistant
     participant API as FastAPI / MCP
-    participant WS as Workspace (Redis)
-    participant Engine as Dataflow Engine
-    participant DB as PostgreSQL (Facts)
+    participant Cache as Memory Cache (O(1))
+    participant Adapter as BiTemporalAdapter
+    participant Engine as Graph Engine (Git-DAG)
 
-    Dev->>API: query_dead_code(commit_sha="b8f2")
-    API->>WS: get_ancestry("b8f2")
-    WS-->>API: [ancestor_shas...]
-    API->>Engine: evaluate_rule("dead_code", ancestry)
-    Engine->>DB: recursive CTE with ancestry filter
-    DB-->>Engine: result set
-    Engine-->>API: structured insights
-    API-->>Dev: JSON / Text Result
+    Dev->>API: query_call_graph(commit_sha="b8f2")
+    API->>Cache: check_active_state("b8f2")
+    Cache-->>API: result (if hit)
+    API->>Adapter: get_calls("b8f2")
+    Adapter->>Engine: topological_lookback("b8f2")
+    Engine-->>Adapter: filtered visibility set
+    Adapter-->>API: call network
+    API-->>Dev: JSON / Graph Result
 ```
 
 ## 🛠️ Setup
@@ -94,11 +97,15 @@ podman exec -it codeintel-ollama ollama pull phi3:mini
 		-H "Content-Type: application/json" \
 		-d '{"repo_path": "/repo"}'
 	```
-- Query dead code:
+- Query dead code at specific commit:
 	```bash
 	curl -X POST http://localhost:8000/query \
 		-H "Content-Type: application/json" \
-		-d '{"rule": "dead_code"}'
+		-d '{"rule": "dead_code", "commit_sha": "abc123"}'
+	```
+- Semantic Search:
+	```bash
+	curl -X GET "http://localhost:8000/search?q=how+to+login"
 	```
 - Generate requirements:
 	```bash
