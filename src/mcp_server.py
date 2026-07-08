@@ -82,6 +82,16 @@ TOOLS = [
             "required": ["query"]
         }
     ),
+    types.Tool(
+        name="get_workspace_info",
+        description="Get current Git states from the workspace session.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_id": {"type": "string"}
+            }
+        }
+    ),
 ]
 
 @server.list_tools()
@@ -143,6 +153,13 @@ async def handle_call_tool(name: str, arguments: dict) -> list[types.TextContent
             dummy_vector = [0.1] * 384 
             result = await storage.semantic_search(dummy_vector, version, limit)
             return [types.TextContent(type="text", text=json.dumps(result, indent=2))]
+
+        elif name == "get_workspace_info":
+            workspace_id = arguments.get("workspace_id")
+            session_data = await workspace_manager.get_session(workspace_id)
+            if not session_data:
+                return [types.TextContent(type="text", text="Error: Workspace session not found.")]
+            return [types.TextContent(type="text", text=json.dumps(session_data, indent=2))]
 
         else:
             raise ValueError(f"Unknown tool: {name}")
