@@ -1,214 +1,217 @@
-# Installation Guide for Code Intelligence Platform
+# Installation and Setup Guide
 
-This guide walks you through installing and running the **Unified Dataflow Code Intelligence Platform** on a Linux environment (Ubuntu/Debian or WSL2). The platform uses Podman for containerization, PostgreSQL with pgvector, Redis, Ollama for LLM, and a FastAPI backend.
+This guide walks through a complete local setup of Code-Intel, starting from prerequisites and ending with a small sample repository that can be indexed, queried, and used to generate requirements.
 
-## 1. System Requirements
+## 1. Prerequisites
 
-- **OS**: Ubuntu 22.04+, Debian 12+, or WSL2 on Windows 10/11
-- **RAM**: Minimum 8 GB (16 GB recommended for LLM)
-- **Disk**: 20 GB free space (models take ~4-8 GB)
-- **CPU**: 4 cores (or more)
-- **GPU**: Optional but recommended for LLM inference
+### Supported environments
+- Ubuntu 22.04+, Debian 12+, or WSL2 on Windows 10/11
+- Python 3.11+
+- Podman or Docker-compatible runtime
+- Git
 
-## 2. Install Prerequisites
+### Install system packages
 
-### 2.1 Install Podman and Podman-Compose
+On Ubuntu/Debian:
 
 ```bash
-# Ubuntu/Debian
 sudo apt update
-sudo apt install -y podman podman-compose
-
-# Verify
-podman --version
-podman-compose --version
+sudo apt install -y git python3.11 python3.11-venv podman podman-compose
 ```
 
-### 2.2 Install uv (Python package manager)
+If you are using WSL2, make sure your distribution has access to the container runtime. On Windows, Podman Desktop or Docker Desktop can be used as the backend.
+
+### Install uv
 
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
-source ~/.bashrc   # or restart shell
+source ~/.bashrc
 uv --version
 ```
 
-### 2.3 Install Git
+## 2. Clone the repository
 
 ```bash
-sudo apt install -y git
+git clone https://github.com/bmrtech-oss/code-intel.git
+cd code-intel
 ```
 
-### 2.4 (Optional) Install Python 3.11+ if not available
+## 3. Create the Python environment
+
+The project already includes a Linux virtual environment folder in the repo, but a fresh setup can be created with:
 
 ```bash
-sudo apt install -y python3.11 python3.11-venv
+uv sync
 ```
 
-## 3. Get the Source Code
-
-Clone the repository (or use the `create_project_uv.sh` script to generate a fresh project). For this guide, we assume you already have the project directory `code-intel-unified/`.
+If you want to use the repository-local environment explicitly:
 
 ```bash
-git clone https://github.com/your-org/code-intel-unified.git
-cd code-intel-unified
+uv venv .venv-linux
+source .venv-linux/bin/activate
+uv sync
 ```
 
-## 4. Build and Start Containers
+## 4. Start the supporting services
 
-### 4.1 Build the Images
-
-```bash
-podman-compose build --no-cache
-```
-
-This builds the `api` and `worker` images.
-
-### 4.2 Start All Services
+The project expects PostgreSQL, Redis, and Ollama to be available. The repo includes a Compose file for this purpose.
 
 ```bash
 podman-compose up -d
 ```
 
-Services started:
-- `postgres` (PostgreSQL + pgvector)
-- `redis` (for job queues)
-- `ollama` (LLM server)
-- `worker` (background ingestion)
-- `api` (FastAPI server)
-
-### 4.3 Check Container Status
+If you are using Docker instead of Podman, adjust the runtime command accordingly. Verify the services are running:
 
 ```bash
 podman ps
 ```
 
-All containers should show `Up`.
+You should see containers for the database, Redis, and Ollama.
 
-### 4.4 Pull an LLM Model (e.g., phi3:mini)
+### Pull a model for requirements generation
 
 ```bash
 podman exec -it codeintel-ollama ollama pull phi3:mini
 ```
 
-This may take a few minutes depending on network.
+This may take several minutes depending on your network speed.
 
-## 5. Run Database Migrations
+## 5. Start the API server
 
-The API automatically creates tables on startup, but you can run migrations manually (if using Alembic). However, for first run, just restart the API:
-
-```bash
-podman restart codeintel-api
-```
-
-Wait 10 seconds, then check logs:
+From the repo root:
 
 ```bash
-podman logs codeintel-api --tail 30
+uv run python -m src.cli.main serve
 ```
 
-You should see `Application startup complete.`
+The API will be available at:
+- http://localhost:8000/docs
+- http://localhost:8000/requirements
 
-## 6. Test the Installation
-
-### 6.1 Health Check
+You can verify the API is up with:
 
 ```bash
-curl http://localhost:8000/docs
+curl http://localhost:8000/docs | head
 ```
 
-You should see the Swagger UI.
+## 6. Create sample test data
 
-### 6.2 Index a Sample Repository
+A simple sample repository is enough to verify indexing, graph queries, and requirements generation.
 
-Create a small test repo:
+### 6.1 Create a small sample project
 
 ```bash
-mkdir -p /tmp/test_repo
-echo 'def hello(): pass' > /tmp/test_repo/test.py
+mkdir -p /tmp/codeintel-sample/src
+cat > /tmp/codeintel-sample/src/app.py <<'PY'
+from src.helpers import format_message
+
+
+def greet(name: str) -> str:
+    return format_message(f"Hello {name}")
+
+
+def unused_helper() -> str:
+    return "unused"
+PY
+
+cat > /tmp/codeintel-sample/src/helpers.py <<'PY'
+def format_message(text: str) -> str:
+    return text.upper()
+PY
 ```
 
-Index it using the CLI inside the container:
+This sample gives you:
+- one function that is used by another function
+- one unused helper that can appear in dead-code analysis
+
+### 6.2 Index the sample repository
 
 ```bash
-podman exec -it codeintel-api uv run python -m src analyze /tmp/test_repo
+uv run python -m src.cli.main analyze /tmp/codeintel-sample --version sample-v1
 ```
 
-### 6.3 Query for Dead Code
+The indexing step parses the sample files and writes facts into the versioned storage layer.
+
+## 7. Exercise the core workflows
+
+### 7.1 Query dead code
 
 ```bash
 curl -X POST http://localhost:8000/query \
   -H "Content-Type: application/json" \
-  -d '{"rule": "dead_code"}'
+  -d '{"rule": "dead_code", "commit_sha": "sample-v1"}'
 ```
 
-Expected output: `{"result": [{"symbol_id":"function:hello",...}]}`
+You should see the unused helper appear in the result set.
 
-### 6.4 Generate Requirements
+### 7.2 Query impact or call relationships
 
 ```bash
-curl -X POST http://localhost:8000/requirements
+curl -X POST http://localhost:8000/query \
+  -H "Content-Type: application/json" \
+  -d '{"rule": "impact", "commit_sha": "sample-v1", "symbol": "src.app.greet"}'
 ```
 
-You should receive a JSON with epic, feature, user story, etc.
-
-## 7. Using the CLI Locally (Optional)
-
-If you want to run the CLI without entering the container, install the package in a virtual environment:
+### 7.3 Generate requirements
 
 ```bash
-uv venv
-source .venv/bin/activate
-uv pip install -e .
+curl -X POST http://localhost:8000/requirements \
+  -H "Content-Type: application/json" \
+  -d '{"version": "sample-v1"}'
 ```
 
-Now you can use `code-intel` commands:
+The endpoint returns structured requirements and stores traceability links for the underlying symbols.
+
+## 8. Start the MCP server (optional)
+
+If you want to use Code-Intel from an MCP-compatible client:
 
 ```bash
-code-intel analyze /tmp/test_repo
-code-intel query dead_code
-code-intel requirements
+uv run python -m src.mcp_server
 ```
 
-## 8. Configure MCP Server for Claude Code (Optional)
+## 9. Start the web UI (optional)
 
-1. Create a file `.mcp.json` in your project root:
-
-```json
-{
-  "mcpServers": {
-    "code-intel": {
-      "command": "podman",
-      "args": ["exec", "-i", "codeintel-api", "uv", "run", "python", "-m", "src", "mcp"]
-    }
-  }
-}
-```
-
-2. Restart Claude Code and verify the tools are available.
-
-## 9. Stopping and Removing Containers
+If the frontend is available in your checkout:
 
 ```bash
-podman-compose down          # stop containers
-podman-compose down -v       # also remove volumes (deletes database and models)
+cd ui
+npm install
+npm run dev
 ```
 
-## 10. Troubleshooting
+Then open http://localhost:5173.
 
-| Issue | Solution |
-|-------|----------|
-| `podman-compose: command not found` | Install via `pip install podman-compose` or your package manager. |
-| `short-name` resolution errors | Add `unqualified-search-registries = ["docker.io"]` to `/etc/containers/registries.conf`. |
-| API container crashes | Check logs: `podman logs codeintel-api`. Common issues: missing `git` in Dockerfile or missing Python dependencies. |
-| Ollama model not responding | Ensure the model is pulled: `podman exec -it codeintel-ollama ollama list`. |
-| Port 8000 already in use | Change host port in `podman-compose.yml` to `"8080:8000"` and update URLs accordingly. |
-| Empty requirements output | Switch to a smaller model (e.g., `phi3:mini`), limit symbols in prompt, or increase timeout. |
+## 10. Stop and reset services
 
-## 11. Next Steps
+Stop the containers:
 
-- **Add more languages** – Extend tree‑sitter handlers for Java, COBOL, Delphi.
-- **Deploy to Kubernetes** – Use the provided `podman-compose.yml` as a blueprint for AKS.
-- **Build a Web UI** – Use the shared React component library.
-- **Integrate with CI/CD** – Run `code-intel analyze` in your pipeline.
+```bash
+podman-compose down
+```
 
-The platform is now ready for production use. For advanced configuration, refer to the documentation.
+To remove volumes and reset the database:
+
+```bash
+podman-compose down -v
+```
+
+## 11. Troubleshooting
+
+### API fails to start
+- Check the logs with `podman logs codeintel-api`.
+- Confirm the database and Redis containers are healthy.
+
+### Requirements are empty
+- Ensure Ollama is running and the model was pulled successfully.
+- Verify the API can reach `http://ollama:11434` from the container network.
+
+### Indexing reports no symbols
+- Confirm the sample files exist at the path you passed into the analyzer.
+- Check that the repository uses a supported extension such as `.py`.
+
+## 12. Next steps
+
+- Add more sample files in other languages.
+- Try the MCP workflow with Claude Code or similar clients.
+- Explore the benchmark script in the scripts folder for graph-engine comparisons.

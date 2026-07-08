@@ -54,6 +54,17 @@ nodes:
         deleted_in: 
           type: string
           description: "Commit SHA where the file was deleted (null if active)."
+  - RemoteReference:
+      description: "A reference to a code entity in an external repository."
+      properties:
+        id:
+          type: string
+        repo_url:
+          type: string
+        ref_sha:
+          type: string
+        exposed_interface:
+          type: string
 
 edges:
   - CALLS:
@@ -82,3 +93,7 @@ edges:
       from: Commit
       to: Commit
       description: "Git commit ancestry relationship."
+  - IMPORTS_FROM:
+      from: DefNode
+      to: RemoteReference
+      description: "Cross-repository dependency link."
