@@ -201,7 +201,11 @@ Claude should invoke the `query_dead_code` tool and return results.
 
 ---
 
-## 9. Graph Engine Benchmarking
+## 9. MCP and UI Foundations
+
+The current MCP server and UI scaffold are documented in [docs/mcp-ui-foundations.md](docs/mcp-ui-foundations.md). This includes the local MCP launcher, the workspace-info tool, the three-panel UI shell, and the local `.mcp.json` configuration.
+
+## 10. Graph Engine Benchmarking
 
 Run the Git-DAG engine comparison script to benchmark the ancestry lookback query and edge-filtering flow:
 
@@ -211,7 +215,7 @@ uv run python scripts/evaluate_graph_engines.py --runs 5
 
 This writes a markdown report to [docs/engine_benchmark_results.md](docs/engine_benchmark_results.md). The benchmark uses synthetic commit and code-edge data to emulate the planned topological query path and compares Memtrace with TerminusDB. The CI workflow runs a one-iteration smoke test of this script automatically.
 
-## 10. Performance & Load Testing (Optional)
+## 11. Performance & Load Testing (Optional)
 
 - Use `ab` or `wrk` to stress the `/query` endpoint.
 - Monitor container resource usage: `podman stats`.
@@ -219,7 +223,7 @@ This writes a markdown report to [docs/engine_benchmark_results.md](docs/engine_
 
 ---
 
-## 11. Troubleshooting Common Issues
+## 12. Troubleshooting Common Issues
 
 | Issue | Likely Fix |
 |-------|-------------|

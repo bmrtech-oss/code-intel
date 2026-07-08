@@ -4,18 +4,65 @@ Our approach is fundamentally different from the established players in the code
 | :--- | :--- | :--- |
 | **Core Data Model** | Specialized, language-specific schema (e.g., CodeQL's relational DB)[reference:1][reference:2] or a separate Graph DB (e.g., Neo4j)[reference:3]. | **Unified, language-agnostic fact model.** All code data is stored in a single versioned relational table. |
 | **Analysis Logic** | **Imperative** or specialized query language (e.g., CodeQL's QL)[reference:4]. Adding a new analysis often requires code changes or learning a proprietary DSL. | **Declarative analysis via standard SQL views and UDFs.** New insights are added as simple SQL queries, not code changes. |
-| **Storage Architecture** | Multiple siloed systems: separate DB for analysis results (e.g., PostgreSQL for SonarQube)[reference:5], separate search indexes (e.g., Sourcegraph's Zoekt trigram index)[reference:6], and separate graph databases (e.g., Neo4j)[reference:7]. | **A single, versioned relational database (PostgreSQL + pgvector)** serving as the "Single Source of Truth" for all data: facts, vectors, and time‑travel versions. |
-| **Incremental Updates & Time Travel** | Not built-in. Typically requires **full re-indexing** of a snapshot or manual complex change capture[reference:8]. | **Native incremental maintenance and time travel.** Every fact has a `valid_from` and `valid_to` timestamp, allowing querying of any past state. |
+| **Storage Architecture** | Multiple siloed systems: separate DB for analysis results (e.g., PostgreSQL for SonarQube)[reference:5], separate search indexes (e.g., Sourcegraph's Zoekt trigram index)[reference:6], and separate graph databases (e.g., Neo4j)[reference:7]. | **A single, versioned relational database (PostgreSQL + pgvector)** serving as the "Single Source of Truth" for all data: facts, vectors, and Git-DAG versions. |
+| **Incremental Updates & Time Travel** | Not built-in. Typically requires **full re-indexing** of a snapshot or manual complex change capture[reference:8]. | **Native incremental maintenance and time travel.** Every fact has `introduced_in` and `deleted_in` commit SHAs, allowing querying of any historical state via the Git-DAG. |
 | **LLM Integration** | Separate, external service. Requirements generation is an isolated step disconnected from the analysis core. | **LLM as a first-class User-Defined Function (UDF)** inside the dataflow. Requirements generation is a declarative query that calls the LLM. |
 | **Extensibility** | Adding a new language requires writing complex, language-specific importers and integration into the pipeline. | Adding a new language is done via a **visitor that emits atomic facts**. All existing analyses automatically work. |
-| **Deployment Complexity** | High. Often requires orchestrating multiple services (e.g., a frontend, a worker, a separate database, a language server, a search indexer)[reference:9]. | **Low. A single‑binary application** (container) containing the API, worker, and analysis engine, with PostgreSQL as its only external dependency. |
+| **Deployment Complexity** | High. Often requires orchestrating multiple services (e.g., a frontend, a worker, a separate database, a language server, a search indexer)[reference:9]. | **Low. A single-binary application** (container) containing the API, worker, and analysis engine, with PostgreSQL as its only external dependency. |
 
 ---
 
 ## 🔎 A Closer Look at the Differences
 
+### Architectural Comparison: Traditional vs. Code-Intel
+
+```mermaid
+graph LR
+    subgraph "Traditional Approach (Siloed)"
+        Source1[Source Code] --> Parser1[Parser]
+        Parser1 --> GraphDB[(Neo4j / Graph DB)]
+        Parser1 --> SearchIndex[(Elasticsearch / Zoekt)]
+        Parser1 --> RelDB[(PostgreSQL / Analysis)]
+        GraphDB --- Analysis1[Custom Analysis Logic]
+        SearchIndex --- Analysis1
+        RelDB --- Analysis1
+    end
+
+    subgraph "Code-Intel (Unified Data Plane)"
+        Source2[Source Code] --> Parser2[tree-sitter Visitor]
+        Parser2 --> UnifiedStore[(PostgreSQL + pgvector)]
+        UnifiedStore --- SQLViews[SQL Views / UDFs]
+        SQLViews --- Analysis2[Unified Analysis]
+    end
+```
+
 ### Data Models: Specialized Silo vs. Unified Fact
-Tools like CodeQL use a language‑specific relational schema, which means understanding a new language requires learning a new database model[reference:10]. Neo4j‑based analyzers, while flexible, require developers to write complex Cypher queries and manage separate graph infrastructure[reference:11]. Our solution models **everything as atomic facts** in a single table, using the universally understood SQL as the query language.
+Tools like CodeQL use a language-specific relational schema, which means understanding a new language requires learning a new database model[reference:10]. Neo4j-based analyzers, while flexible, require developers to write complex Cypher queries and manage separate graph infrastructure[reference:11]. Our solution models **everything as atomic facts** in a single table, using the universally understood SQL as the query language.
+
+### Ingestion & Versioning: Snapshots vs. Git-DAG
+
+In traditional systems, indexing a new commit often means a full re-scan or complex snapshot management. Our system uses a **Git-DAG topological schema**, where facts are inherently linked to the commit they were introduced in.
+
+```mermaid
+graph TD
+    subgraph "Git Commit DAG"
+        C1[Commit A] --> C2[Commit B]
+        C2 --> C3[Commit C]
+        C2 --> C4[Commit D]
+    end
+
+    subgraph "Unified Fact Store"
+        F1[Fact 1: introduced_in=A]
+        F2[Fact 2: introduced_in=B]
+        F3[Fact 3: introduced_in=C]
+        F4[Fact 4: introduced_in=D, deleted_in=...]
+    end
+
+    C1 -.-> F1
+    C2 -.-> F2
+    C3 -.-> F3
+    C4 -.-> F4
+```
 
 ### Analysis: Imperative Code vs. Declarative Queries
 Adding a new analysis to a competitor often means modifying complex extraction code or learning a new DSL like CodeQL's QL[reference:12]. In our system, it's a declarative SQL query, as shown by the `dead_code` detection rule:
@@ -61,6 +108,7 @@ graph TB
 
         subgraph "Our Platform (Single Container)"
             API[FastAPI / Analysis Engine]
+            WS[Workspace / Git-DAG]
         end
 
         PG[(PostgreSQL<br/>+ pgvector)]
