@@ -65,10 +65,12 @@ def extract_json(text: str):
 @app.on_event("startup")
 async def init_db():
     async with engine.begin() as conn:
-        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+        if engine.dialect.name == "postgresql":
+            await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         await conn.run_sync(Base.metadata.create_all)
         # Create views for symbols and calls
-        await conn.execute(text("DROP VIEW IF EXISTS current_symbols CASCADE"))
+        cascade = "CASCADE" if engine.dialect.name == "postgresql" else ""
+        await conn.execute(text(f"DROP VIEW IF EXISTS current_symbols {cascade}"))
         await conn.execute(text("""
             CREATE VIEW current_symbols AS
             SELECT 
@@ -82,7 +84,7 @@ async def init_db():
             WHERE entity_type = 'symbol' AND valid_to IS NULL
             GROUP BY entity_id, version
         """))
-        await conn.execute(text("DROP VIEW IF EXISTS current_calls CASCADE"))
+        await conn.execute(text(f"DROP VIEW IF EXISTS current_calls {cascade}"))
         await conn.execute(text("""
             CREATE VIEW current_calls AS
             SELECT 
@@ -104,6 +106,7 @@ class AnalyzeRequest(BaseModel):
 class QueryRequest(BaseModel):
     rule: str
     version: Optional[str] = None
+    commit_sha: Optional[str] = None
     symbol: Optional[str] = None
     depth: Optional[int] = 3
 
@@ -129,10 +132,33 @@ async def status(job_id: str):
 
 @app.post("/query")
 async def query(req: QueryRequest, db: AsyncSession = Depends(get_db)):
+    from ..settings import USE_BITEMPORAL
+    
     storage = VersionedStorage(db)
-    version = req.version or await storage.get_current_version()
+    version = req.commit_sha or req.version or await storage.get_current_version()
     if not version:
-        raise HTTPException(status_code=400, detail="No version found")
+        raise HTTPException(status_code=400, detail="No version or commit_sha found")
+
+    # Use BiTemporalAdapter if enabled
+    if USE_BITEMPORAL:
+        from ..mcp_server import adapter as mcp_adapter, init_topological_stack
+        await init_topological_stack()
+        adapter = mcp_adapter
+
+        if adapter:
+            if req.rule in ("query_call_graph", "transitive_calls"):
+                result = await adapter.get_calls(version, caller_fqn=req.symbol)
+                return {"result": result}
+            elif req.rule == "dead_code":
+                all_symbols = await adapter.get_symbols(version, filters={"kind": "function"})
+                all_calls = await adapter.get_calls(version)
+                called_fqns = {c["to"] for c in all_calls}
+                result = [s for s in all_symbols if s["fqn"] not in called_fqns]
+                return {"result": result}
+            elif req.rule == "impact":
+                result = await adapter.get_transitive_dependencies(version, req.symbol, max_depth=req.depth or 3)
+                return {"result": list(result)}
+
     dataflow = DataflowEngine(storage)
     rules = RuleEngine(storage, dataflow)
     try:
@@ -257,3 +283,32 @@ async def get_traceability(requirement_id: str, db: AsyncSession = Depends(get_d
     )
     symbols = [dict(row) for row in result.mappings()]
     return {"requirement_id": requirement_id, "symbols": symbols}
+
+@app.get("/search")
+async def search(q: str, limit: int = 5):
+    from .. import mcp_server
+    await mcp_server.init_topological_stack()
+    if mcp_server.semantic_search_engine:
+        results = await mcp_server.semantic_search_engine.search(q, limit)
+        return {"results": results}
+    else:
+        raise HTTPException(status_code=503, detail="Semantic search engine not initialized")
+
+@app.get("/analytics/predict-impact")
+async def predict_impact(symbol: str, commit_sha: Optional[str] = None):
+    from .. import mcp_server
+    await mcp_server.init_topological_stack()
+    version = commit_sha
+    if not version:
+        # Get active SHA
+        from ..mcp_server import workspace_manager
+        version = await workspace_manager.get_active_sha()
+    
+    if not version:
+        raise HTTPException(status_code=400, detail="No commit_sha available")
+
+    if mcp_server.impact_predictor:
+        result = await mcp_server.impact_predictor.predict_blast_radius(symbol, version)
+        return result
+    else:
+        raise HTTPException(status_code=503, detail="Impact predictor not initialized")

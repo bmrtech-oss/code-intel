@@ -1,0 +1,89 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": "-- Grafana --",
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "gnetId": null,
+  "graphTooltip": 0,
+  "id": 1,
+  "links": [],
+  "panels": [
+    {
+      "title": "Adapter Lookup Latency",
+      "type": "graph",
+      "targets": [
+        {
+          "expr": "rate(adapter_lookup_seconds_sum[5m]) / rate(adapter_lookup_seconds_count[5m])",
+          "legendFormat": "{{method}}"
+        }
+      ],
+      "yaxes": [
+        { "format": "s" },
+        { "format": "short" }
+      ]
+    },
+    {
+      "title": "Cache Hit Ratio",
+      "type": "graph",
+      "targets": [
+        {
+          "expr": "sum(rate(adapter_cache_hits_total[5m])) by (method) / (sum(rate(adapter_cache_hits_total[5m])) by (method) + sum(rate(adapter_cache_misses_total[5m])) by (method))",
+          "legendFormat": "{{method}}"
+        }
+      ],
+      "yaxes": [
+        { "format": "percentunit", "max": 1, "min": 0 },
+        { "format": "short" }
+      ]
+    },
+    {
+      "title": "CDC Sync Delay",
+      "type": "gauge",
+      "targets": [
+        {
+          "expr": "cdc_sync_delay_seconds",
+          "legendFormat": "Sync Delay"
+        }
+      ],
+      "gauge": {
+        "show": true,
+        "value": true
+      }
+    },
+    {
+      "title": "System Errors",
+      "type": "graph",
+      "targets": [
+        {
+          "expr": "rate(adapter_errors_total[5m])",
+          "legendFormat": "{{method}}"
+        }
+      ]
+    }
+  ],
+  "schemaVersion": 21,
+  "style": "dark",
+  "tags": ["code-intel", "production"],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "",
+  "title": "Code-Intel Production Metrics",
+  "uid": "codeintel-prod",
+  "version": 1
+}

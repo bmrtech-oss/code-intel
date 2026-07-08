@@ -45,6 +45,9 @@ graph TB
 
 - **Unified Fact Model**: All code data (symbols, calls, data flows) stored as versioned relational facts.
 - **Git-DAG Topological Schema**: Native support for branches, merges, and rebases using `introduced_in`, `modified_in`, and `deleted_in` metadata.
+- **Topological Cache**: Sub-millisecond current-state lookups using an optimized in-memory cache with background CDC/Polling sync.
+- **Timeline Travel**: High-performance historical queries and interactive graph visualization of code structure at any commit SHA.
+- **Hybrid Semantic Search**: Combines structural code identity with BGE-small embeddings via `txtai` for natural language code search.
 - **MCP-Native**: First-class Model Context Protocol (MCP) server for seamless integration with AI assistants like Claude Code.
 - **Declarative Analysis**: New analyses (e.g., dead code, impact) are simple SQL views, not complex code.
 - **LLM as a UDF**: Requirements generation is a first-class query inside the database flow.
@@ -55,18 +58,18 @@ graph TB
 sequenceDiagram
     participant Dev as Developer / AI Assistant
     participant API as FastAPI / MCP
-    participant WS as Workspace (Redis)
-    participant Engine as Dataflow Engine
-    participant DB as PostgreSQL (Facts)
+    participant Cache as Memory Cache (O(1))
+    participant Adapter as BiTemporalAdapter
+    participant Engine as Graph Engine (Git-DAG)
 
-    Dev->>API: query_dead_code(commit_sha="b8f2")
-    API->>WS: get_ancestry("b8f2")
-    WS-->>API: [ancestor_shas...]
-    API->>Engine: evaluate_rule("dead_code", ancestry)
-    Engine->>DB: recursive CTE with ancestry filter
-    DB-->>Engine: result set
-    Engine-->>API: structured insights
-    API-->>Dev: JSON / Text Result
+    Dev->>API: query_call_graph(commit_sha="b8f2")
+    API->>Cache: check_active_state("b8f2")
+    Cache-->>API: result (if hit)
+    API->>Adapter: get_calls("b8f2")
+    Adapter->>Engine: topological_lookback("b8f2")
+    Engine-->>Adapter: filtered visibility set
+    Adapter-->>API: call network
+    API-->>Dev: JSON / Graph Result
 ```
 
 ## 🛠️ Setup
@@ -94,27 +97,45 @@ podman exec -it codeintel-ollama ollama pull phi3:mini
 		-H "Content-Type: application/json" \
 		-d '{"repo_path": "/repo"}'
 	```
-- Query dead code:
+- Query dead code at specific commit:
 	```bash
 	curl -X POST http://localhost:8000/query \
 		-H "Content-Type: application/json" \
-		-d '{"rule": "dead_code"}'
+		-d '{"rule": "dead_code", "commit_sha": "abc123"}'
+	```
+- Semantic Search:
+	```bash
+	curl -X GET "http://localhost:8000/search?q=how+to+login"
 	```
 - Generate requirements:
 	```bash
 	curl -X POST http://localhost:8000/requirements
 	```
 
+## How parser output becomes requirements
+
+The requirements flow is an end-to-end pipeline that starts with AST extraction and ends with traceable requirements:
+
+1. The ingestion pipeline selects a language-specific visitor from the file extension and parses each source file into structured symbols and call edges.
+2. Those facts are written into the versioned storage layer as symbol and call records, so each result is tied to a specific repository version.
+3. The `/requirements` endpoint loads the current version’s facts and passes them to `LLMUDF`, which serializes them into a prompt using the model-specific template from the prompts directory.
+4. Ollama returns a JSON document describing epics, features, and stories; the server cleans and parses that response, stores traceability links in `requirement_traceability`, and returns the structured requirements to the client.
+5. The same pipeline is available through the MCP server, which exposes the same requirements workflow to AI assistants.
+
 ## Documentation Index
 
 The repository documentation set lives under [docs](docs):
 
+- [INSTALL.md](INSTALL.md) — full local setup guide, including prerequisites, services, and a sample repository walkthrough.
+- [docs/demo_guide.md](docs/demo_guide.md) — step-by-step feature demo from ingestion through requirements generation.
 - [docs/code-intel-design.md](docs/code-intel-design.md) — high-level system design and architecture notes.
 - [docs/code-intel-nxt.md](docs/code-intel-nxt.md) — next-step roadmap and product direction.
 - [docs/conde-intel-nxt-prompts.md](docs/conde-intel-nxt-prompts.md) — prompt and workflow notes for the next-generation experience.
 - [docs/how-code-intel-is-different.md](docs/how-code-intel-is-different.md) — explanation of the platform’s differentiators.
 - [docs/mcp-ui-foundations.md](docs/mcp-ui-foundations.md) — current MCP server and UI foundation status.
+- [docs/use_cases_guide.md](docs/use_cases_guide.md) — practical use cases for modernization, impact analysis, history exploration, and AI-assisted development.
 - [docs/engine_benchmark_results.md](docs/engine_benchmark_results.md) — latest graph engine benchmark report.
+- [docs/code-intel-ai-review-results.md](docs/code-intel-ai-review-results.md) — review notes and findings for the current implementation direction.
 - [docs/schema/git_dag_schema.yaml](docs/schema/git_dag_schema.yaml) — Git-DAG schema definition.
 
 ## MCP and UI Foundations
