@@ -135,43 +135,37 @@ class SimpleGraphEngine:
         return results
 
     async def get_delta(self, from_sha: Optional[str], to_sha: str) -> Dict[str, Any]:
-        ancestry_to = await self.topological_lookback_query(to_sha)
-        nodes_to = await self.query_nodes(ancestry_to, "DefNode")
-        # Fetch ALL edge types for the delta
-        edges_to = await self.query_edges(ancestry_to, edge_type=None)
+        """
+        Calculates the symmetric difference (True Delta) between two SHAs using O(1) bitset logic.
+        """
+        mask_to = await self.get_ancestry_mask(to_sha)
+        mask_from = await self.get_ancestry_mask(from_sha) if from_sha else 0
 
-        if from_sha is None:
-            return {
-                "added_nodes": nodes_to,
-                "removed_nodes": [],
-                "added_edges": edges_to,
-                "removed_edges": [],
-                "new_ancestry": ancestry_to
-            }
+        # Visibility logic: (intro & mask) != 0 AND (del & mask) == 0
+        added_nodes = []
+        removed_nodes = []
+        for n in self.nodes:
+            visible_to = (n["_intro_bit"] & mask_to) != 0 and (n["_del_bit"] & mask_to) == 0
+            visible_from = (n["_intro_bit"] & mask_from) != 0 and (n["_del_bit"] & mask_from) == 0
+            if visible_to and not visible_from:
+                added_nodes.append(n)
+            elif visible_from and not visible_to:
+                removed_nodes.append(n)
 
-        ancestry_from = await self.topological_lookback_query(from_sha)
-        nodes_from = await self.query_nodes(ancestry_from, "DefNode")
-        edges_from = await self.query_edges(ancestry_from, edge_type=None)
-
-        node_id_to = {n["id"]: n for n in nodes_to if "id" in n}
-        node_id_from = {n["id"]: n for n in nodes_from if "id" in n}
-
-        added_nodes = [n for nid, n in node_id_to.items() if nid not in node_id_from]
-        removed_nodes = [n for nid, n in node_id_from.items() if nid not in node_id_to]
-
-        def edge_key(e):
-            return (e.get("from"), e.get("to"), e.get("type"))
-
-        edge_id_to = {edge_key(e): e for e in edges_to}
-        edge_id_from = {edge_key(e): e for e in edges_from}
-
-        added_edges = [e for key, e in edge_id_to.items() if key not in edge_id_from]
-        removed_edges = [e for key, e in edge_id_from.items() if key not in edge_id_to]
+        added_edges = []
+        removed_edges = []
+        for e in self.edges:
+            visible_to = (e["_intro_bit"] & mask_to) != 0 and (e["_del_bit"] & mask_to) == 0
+            visible_from = (e["_intro_bit"] & mask_from) != 0 and (e["_del_bit"] & mask_from) == 0
+            if visible_to and not visible_from:
+                added_edges.append(e)
+            elif visible_from and not visible_to:
+                removed_edges.append(e)
 
         return {
             "added_nodes": added_nodes,
             "removed_nodes": removed_nodes,
             "added_edges": added_edges,
             "removed_edges": removed_edges,
-            "new_ancestry": ancestry_to
+            "new_ancestry": await self.topological_lookback_query(to_sha)
         }
