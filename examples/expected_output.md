@@ -2,6 +2,31 @@
 
 This document describes the facts and requirements that Code-Intel is expected to generate for the sample projects in the `examples/` directory.
 
+## 0. Python Example (`examples/python/app.py`)
+
+### Extracted Symbols
+| FQN | Kind | Line |
+|-----|------|------|
+| used_function | function | 1 |
+| dead_function | function | 5 |
+
+### Call Graph (Edges)
+| From | To |
+|------|----|
+| __main__ | used_function |
+
+### Dead Code Detection Results
+| Symbol ID | Reason |
+|-----------|--------|
+| app.dead_function | Zero incoming call edges from active entry points. |
+
+### Generated Requirements (Sample)
+- **Epic**: Python Application Core
+- **Feature**: Utility Functions
+- **User Story**: As a developer, I want a `used_function` that provides core utility logic to the main entry point.
+
+---
+
 ## 1. COBOL Example (`examples/cobol/hello.cbl`)
 
 ### Extracted Symbols
