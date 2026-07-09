@@ -83,7 +83,7 @@ class LLMUDF:
         self.client = AsyncClient(host=OLLAMA_URL)
         self.handler = get_handler(MODEL)
 
-    async def generate_requirements(self, symbols: List[Dict], calls: List[Dict]) -> str:
+    async def generate_requirements(self, symbols: List[Dict], calls: List[Dict]) -> Dict[str, Any]:
         prompt = self.handler.build_prompt(symbols, calls)
         print(f"DEBUG: Prompt length {len(prompt)}")
         response = await self.client.generate(
@@ -93,7 +93,41 @@ class LLMUDF:
         )
         parsed = self.handler.parse_response(response.response)
         print(f"DEBUG: Raw response: {response.response}")
-        return json.dumps(parsed)
+        
+        # Grounding fact IDs
+        grounded_in = [s["id"] for s in symbols if "id" in s] + [c["id"] for c in calls if "id" in c]
+        
+        # Simple validation
+        is_verified, confidence = self.validate_artifact(parsed, symbols, calls)
+        
+        return {
+            "result": parsed,
+            "provenance": {
+                "grounded_in": grounded_in,
+                "prompt": prompt,
+                "model": MODEL,
+                "is_verified": is_verified,
+                "confidence": confidence
+            }
+        }
+
+    def validate_artifact(self, artifact: Dict[str, Any], symbols: List[Dict], calls: List[Dict]) -> (bool, float):
+        """
+        Simple validation: check if cited symbol IDs actually exist in context.
+        """
+        if "tasks" not in artifact:
+            return True, 1.0
+            
+        all_symbol_ids = {str(s.get("id")) for s in symbols}
+        all_symbol_ids.update({str(s.get("symbol_id")) for s in symbols})
+
+        for task in artifact.get("tasks", []):
+            traceability = task.get("traceability", [])
+            for sid in traceability:
+                if str(sid) not in all_symbol_ids:
+                    # hallucination detected
+                    return False, 0.5
+        return True, 1.0
 
     async def generate_requirements_stream(self, symbols: List[Dict], calls: List[Dict]):
         prompt = self.handler.build_prompt(symbols, calls)

@@ -9,7 +9,7 @@ from typing import Optional
 from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
-from ..core.storage import VersionedStorage, get_db, engine
+from ..core.storage import VersionedStorage, get_db, engine, AsyncSessionLocal, EXTRACTOR_VERSION, MODEL
 from ..core.models import Base
 from ..core.dataflow import DataflowEngine
 from ..core.rules import RuleEngine
@@ -67,6 +67,18 @@ async def init_db():
         if engine.dialect.name == "postgresql":
             await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         await conn.run_sync(Base.metadata.create_all)
+
+    # Handle schema versioning and deprecation
+    async with AsyncSessionLocal() as session:
+        storage = VersionedStorage(session)
+        current_schema = await storage.get_schema_version()
+        if current_schema != EXTRACTOR_VERSION:
+            print(f"Schema version mismatch ({current_schema} != {EXTRACTOR_VERSION}). Deprecating old facts.")
+            await storage.deprecate_old_extractor_facts()
+            await storage.set_schema_version(EXTRACTOR_VERSION)
+            await session.commit()
+
+    async with engine.begin() as conn:
         # Create views for symbols and calls
         cascade = "CASCADE" if engine.dialect.name == "postgresql" else ""
         await conn.execute(text(f"DROP VIEW IF EXISTS current_symbols {cascade}"))
@@ -171,8 +183,21 @@ async def requirements_stream(version: Optional[str] = None, db: AsyncSession = 
     version = version or await storage.get_current_version()
     if not version:
         raise HTTPException(status_code=400, detail="No version found")
-    symbols = await storage.execute_query("SELECT * FROM current_symbols WHERE version = :v", {"v": version})
-    calls = await storage.execute_query("SELECT * FROM current_calls WHERE version = :v", {"v": version})
+    
+    # Fetch fact IDs and metadata for grounding
+    symbols = await storage.execute_query("""
+        SELECT f.id, s.symbol_id, s.version, s.name, s.kind, s.file, s.line
+        FROM current_symbols s
+        JOIN facts f ON s.symbol_id = f.entity_id AND s.version = f.version AND f.attribute = 'kind'
+        WHERE s.version = :v AND f.valid_to IS NULL
+    """, {"v": version})
+    calls = await storage.execute_query("""
+        SELECT f.id, c.call_id, c.version, c.caller, c.callee, c.confidence
+        FROM current_calls c
+        JOIN facts f ON c.call_id = f.entity_id AND c.version = f.version AND f.attribute = 'callee'
+        WHERE c.version = :v AND f.valid_to IS NULL
+    """, {"v": version})
+    
     udf = LLMUDF()
 
     async def event_generator():
@@ -213,6 +238,21 @@ async def requirements_stream(version: Optional[str] = None, db: AsyncSession = 
             if "error" in req_json:
                 req_json = {"raw": full_response, "error": "JSON parse failed"}
 
+        # Store provenance data
+        grounded_in = [s["id"] for s in symbols if "id" in s] + [c["id"] for c in calls if "id" in c]
+        is_verified, confidence = udf.validate_artifact(req_json, symbols, calls)
+
+        await storage.insert_llm_artifact(
+            artifact_type="requirement",
+            value=cleaned,
+            version=version,
+            grounded_in=grounded_in,
+            prompt=udf.handler.build_prompt(symbols, calls),
+            model=MODEL,
+            is_verified=is_verified,
+            confidence=confidence
+        )
+
         traceability_stored = False
         if "tasks" in req_json and isinstance(req_json["tasks"], list):
             for task in req_json["tasks"]:
@@ -243,12 +283,37 @@ async def requirements(version: Optional[str] = None, db: AsyncSession = Depends
     version = version or await storage.get_current_version()
     if not version:
         raise HTTPException(status_code=400, detail="No version found")
-    symbols = await storage.execute_query("SELECT * FROM current_symbols WHERE version = :v", {"v": version})
-    calls = await storage.execute_query("SELECT * FROM current_calls WHERE version = :v", {"v": version})
+    
+    # Fetch fact IDs and metadata for grounding
+    symbols = await storage.execute_query("""
+        SELECT f.id, s.symbol_id, s.version, s.name, s.kind, s.file, s.line
+        FROM current_symbols s
+        JOIN facts f ON s.symbol_id = f.entity_id AND s.version = f.version AND f.attribute = 'kind'
+        WHERE s.version = :v AND f.valid_to IS NULL
+    """, {"v": version})
+    calls = await storage.execute_query("""
+        SELECT f.id, c.call_id, c.version, c.caller, c.callee, c.confidence
+        FROM current_calls c
+        JOIN facts f ON c.call_id = f.entity_id AND c.version = f.version AND f.attribute = 'callee'
+        WHERE c.version = :v AND f.valid_to IS NULL
+    """, {"v": version})
+    
     udf = LLMUDF()
-    req_text = await udf.generate_requirements(symbols, calls)
+    response = await udf.generate_requirements(symbols, calls)
+    req_json = response["result"]
+    provenance = response["provenance"]
 
-    req_json = extract_json(req_text)
+    # Store LLM Artifact
+    await storage.insert_llm_artifact(
+        artifact_type="requirement",
+        value=json.dumps(req_json),
+        version=version,
+        grounded_in=provenance["grounded_in"],
+        prompt=provenance["prompt"],
+        model=provenance["model"],
+        is_verified=provenance["is_verified"],
+        confidence=provenance["confidence"]
+    )
 
     if "tasks" in req_json and isinstance(req_json["tasks"], list):
         for task in req_json["tasks"]:
@@ -310,3 +375,15 @@ async def predict_impact(symbol: str, commit_sha: Optional[str] = None):
         return result
     else:
         raise HTTPException(status_code=503, detail="Impact predictor not initialized")
+
+@app.get("/debug/dependents/{fact_id}")
+async def get_dependents(fact_id: int, is_derived: bool = False, db: AsyncSession = Depends(get_db)):
+    storage = VersionedStorage(db)
+    result = await storage.get_dependents(fact_id, is_derived)
+    return {"fact_id": fact_id, "dependents": result}
+
+@app.get("/debug/provenance/{fact_id}")
+async def get_provenance(fact_id: int, db: AsyncSession = Depends(get_db)):
+    storage = VersionedStorage(db)
+    result = await storage.get_artifacts_by_fact(fact_id)
+    return {"fact_id": fact_id, "artifacts": result}

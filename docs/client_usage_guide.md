@@ -31,7 +31,7 @@ Expose the server using a `.mcp.json` or by adding it to your Claude Desktop con
 | `query_cross_repo_imports` | List external dependencies (Python, TS, Go) for the codebase. |
 | `query_dead_code` | Find functions that are never called in the current topological state. |
 | `query_impact` | Perform blast-radius analysis for a symbol. |
-| `predict_impact` | Predict potential impact based on historical modification patterns. |
+| `predict_impact` | Predict potential impact based on historical modification patterns with confidence weighting. |
 | `semantic_search` | Search the codebase using natural language. |
 | `generate_requirements` | Generate Epics and User Stories with traceability back to code symbols. |
 
@@ -65,7 +65,7 @@ curl -X POST http://localhost:8000/query \
 ```
 
 ### Impact Prediction
-Use historical data to predict the effect of a proposed change:
+Use historical data to predict the effect of a proposed change. Results include a confidence score for each caller:
 ```bash
 curl -X POST http://localhost:8000/query \
   -H "Content-Type: application/json" \
@@ -75,9 +75,31 @@ curl -X POST http://localhost:8000/query \
   }'
 ```
 
+### Fact Confidence Levels
+The platform assigns confidence scores to call resolution:
+- **1.0 (Certain)**: Direct calls to local functions.
+- **0.5 (Heuristic)**: Calls resolved via attribute/member access.
+- **0.3 (Dynamic)**: Calls via reflection (`getattr`, `eval`).
+
 ---
 
-## 3. High-Performance Features
+## 3. Reliability and Integrity
+
+### Extractor Versioning
+Every fact is tagged with the version of the extractor that produced it. When the platform detects a version mismatch at startup, it automatically deprecates older facts, ensuring that analyses are based on the latest, most accurate parsing logic.
+
+### Incremental Invalidation
+The platform uses a dependency-aware invalidation system. Derived facts (e.g., transitive closures) track which base facts they were derived from. If a file is modified and its symbols are updated, all dependent cached analyses are recursively marked as stale and re-computed on the next query.
+
+### Verifying AI Insights (Provenance)
+Every AI-generated artifact (like a requirement or summary) is grounded in specific source code facts. Clients can verify the integrity of these insights by checking the `grounded_in` list of fact IDs. The platform automatically validates these citations; if the LLM hallucinates a non-existent symbol, the artifact is flagged as `unverified` and its confidence score is capped at 0.5.
+
+You can query all artifacts grounded in a specific fact using the debug endpoint:
+```bash
+curl http://localhost:8000/debug/provenance/42
+```
+
+## 4. High-Performance Features
 
 ### Bitset-Based Visibility
 The platform uses bitset-based filtering for ancestry lookups. When querying large repositories (>100k commits), filtering happens in sub-microseconds. Clients can verify this performance by checking the `X-Cache-Status: hit` header in API responses.
@@ -87,7 +109,7 @@ Clients connected to the MCP server benefit from incremental XOR synchronization
 
 ---
 
-## 4. UI Explorer
+## 5. UI Explorer
 
 The Web UI (`http://localhost:5173`) provides an interactive Graph Explorer:
 1. **History Rail**: Navigate through Git commits on the left sidebar.

@@ -39,7 +39,23 @@ Use Code-Intel as a grounding layer for MCP-enabled AI assistants.
 - Keep the assistant anchored to repository facts rather than raw source text alone.
 - Reuse the same versioned state across CLI, API, and MCP workflows.
 
-## 5. Repository Health and Cleanup
+## 5. High-Performance Analysis for Monorepos
+
+Use Code-Intel to analyze massive codebases where traditional graph traversals fail.
+
+- Leverage the **Optimized Read Model** (flattened graph index) for sub-millisecond recursive queries.
+- Scale to monorepos with hundreds of thousands of commits and millions of LOC without performance degradation.
+- Benefit from **Incremental Invalidation** that only re-computes stale parts of the analysis when files change.
+
+## 6. Verifiable AI Requirements Generation
+
+Use Code-Intel to generate documentation and requirements that can be audited for accuracy.
+
+- Generate requirements that are **verifiably grounded** in specific source code facts.
+- Inspect the **grounding provenance** for any AI-generated claim to see which symbols and calls it was based on.
+- Identify and flag **hallucinations** automatically via built-in validation passes.
+
+## 7. Repository Health and Cleanup
 
 Use Code-Intel to identify maintenance opportunities.
 
