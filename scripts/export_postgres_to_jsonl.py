@@ -97,6 +97,7 @@ def process_facts_to_nodes_and_edges(facts: List[Dict[str, Any]]):
                 "file": latest_attrs.get("file"),
                 "docstring": latest_attrs.get("docstring"),
                 "signature": latest_attrs.get("signature"),
+                "extractor_version": sorted_entity_facts[-1].get("extractor_version"),
                 "introduced_in": introduced_in,
                 "modified_in": modified_in,
                 "deleted_in": deleted_in
@@ -107,9 +108,16 @@ def process_facts_to_nodes_and_edges(facts: List[Dict[str, Any]]):
             for f in sorted_entity_facts:
                 latest_attrs[f["attribute"]] = f["value"]
             
+            try:
+                confidence = float(latest_attrs.get("confidence", 1.0))
+            except (TypeError, ValueError):
+                confidence = 1.0
+
             edges[eid] = {
                 "from": latest_attrs.get("caller"),
                 "to": latest_attrs.get("callee"),
+                "confidence": confidence,
+                "extractor_version": sorted_entity_facts[-1].get("extractor_version"),
                 "introduced_in": introduced_in,
                 "deleted_in": deleted_in
             }
@@ -122,8 +130,12 @@ def process_facts_to_nodes_and_edges(facts: List[Dict[str, Any]]):
             # For JSONL, we'll store them as a special edge type
             edges[eid] = {
                 "type": "IMPORTS_FROM",
-                "from": eid.split("->")[0],
+                "from": latest_attrs.get("caller"),
                 "to": latest_attrs.get("module"),
+                "target_repo": latest_attrs.get("target_repo"),
+                "target_sha": latest_attrs.get("target_sha"),
+                "resolved_at": latest_attrs.get("resolved_at"),
+                "extractor_version": sorted_entity_facts[-1].get("extractor_version"),
                 "introduced_in": introduced_in,
                 "deleted_in": deleted_in
             }

@@ -76,9 +76,20 @@ class TypeScriptVisitor:
             if function_node:
                 callee = self._node_text(function_node)
                 caller = ".".join([self.module_name] + self.current_scope)
-                await self.storage.insert_call(caller, callee, 1.0, self.version)
+                
+                confidence = 1.0
+                fn_kind = self._node_kind(function_node)
+                
+                # Member expressions are often polymorphic in TS
+                if fn_kind == "member_expression":
+                    confidence = 0.5
+                # Dynamic calls (eval is common, though discouraged)
+                elif callee in ("eval", "Function"):
+                    confidence = 0.3
+                
+                await self.storage.insert_call(caller, callee, confidence, self.version)
 
-                if self._node_kind(function_node) == "member_expression":
+                if fn_kind == "member_expression":
                     await self.storage.insert_fact("dynamic_call", f"{caller}->{callee}", "type", "cross-file-candidate", self.version)
 
         elif kind == "import_statement":
@@ -87,7 +98,7 @@ class TypeScriptVisitor:
                 module_path = self._node_text(source_node).strip("'\"")
                 if not module_path.startswith("./") and not module_path.startswith("../"):
                     caller = ".".join([self.module_name] + self.current_scope)
-                    await self.storage.insert_fact("cross_repo_import", f"{caller}->{module_path}", "module", module_path, self.version)
+                    await self.storage.insert_cross_repo_import(caller, module_path, self.version)
 
         for child in self._iter_children(node):
             await self._visit(child)

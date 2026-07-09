@@ -36,6 +36,8 @@ graph LR
     subgraph "Processing Stage"
         Parser --> Facts[Atomic Facts<br/>Symbols/Calls]
         Facts --> Store[(Versioned Store<br/>PostgreSQL)]
+        Store --> ReadModel[(Optimized Read Model<br/>Graph Index)]
+        Store --> DerivedCache[Derived Fact Cache<br/>Incremental Invalidation]
         Store --> Cache[In-Memory Cache<br/>XOR Sync]
     end
 
@@ -75,7 +77,10 @@ graph TB
         Cache[Memory Cache<br/>@1@ Visibility]
         Adapter[BiTemporalAdapter<br/>Topological Lookups]
         Engine[Graph Engine<br/>Git-DAG Native]
-        Store[(PostgreSQL + JSONL<br/>Versioned Facts)]
+        subgraph "Storage Layer"
+            Store[(Write Model<br/>Append-only Facts)]
+            ReadModel[(Read Model<br/>Graph Index)]
+        end
     end
 
     subgraph "Ingestion Pipeline"
@@ -135,6 +140,7 @@ The `BiTemporalAdapter` provides a unified interface for code intelligence queri
 - **Bitset-Based Visibility**: Replaces set-based string comparisons with O(1) bitwise operations. Every commit is assigned a unique bit-index, and ancestry is represented as a bitmask. Visibility is verified by `(intro_mask & ancestry_mask) != 0 && (del_mask & ancestry_mask) == 0`.
 - **Memory Cache (O(1))**: `MemoryCache` provides sub-microsecond lookups for the active workspace by storing pre-calculated bitmasks and incrementally updating its state via XOR deltas.
 - **True Delta (XOR) Sync**: Instead of full cache rebuilds, the `CDCListener` fetches symmetric differences (added/removed items) between SHAs. This minimizes network traffic and CPU overhead during synchronization.
+- **Incremental Invalidation**: Derived facts (transitive closure, impact analysis, dead code) are cached and track their dependencies. When a base fact is updated or superseded, dependent derived facts are recursively marked as stale and re-computed on demand.
 
 ### 2.4 Hybrid Semantic Search
 
@@ -142,9 +148,9 @@ The semantic layer combines structural graph intelligence with vector embeddings
 - **Indexing**: `SemanticIndexer` extracts headers, docstrings, and signatures, generating embeddings using `BAAI/bge-small-en-v1.5`.
 - **Hybrid Search**: `SemanticSearch` merges lexical keyword scores (BM25) with vector similarity distances.
 
-### 2.5 Versioned Fact Storage (Git-DAG)
+### 2.5 Versioned Fact Storage (Git-DAG) - The Write Model
 
-Instead of a rigid graph schema, we store **atomic facts** versioned by commit SHAs:
+Instead of a rigid graph schema, we store **atomic facts** versioned by commit SHAs. This is our **Write Model**, designed for append-only integrity and easy auditing.
 
 | entity_type | entity_id | attribute | value | introduced_in | deleted_in |
 |-------------|-----------|-----------|-------|---------------|------------|
@@ -153,8 +159,24 @@ Instead of a rigid graph schema, we store **atomic facts** versioned by commit S
 | symbol | function:validate | file | src/auth.py | abc123 | NULL |
 | call | call:validate->check | caller | function:validate | abc123 | NULL |
 | call | call:validate->check | callee | function:check | abc123 | NULL |
+| call | call:validate->check | confidence | 1.0 | abc123 | NULL |
+| call | call:validate->check | extractor_version | 1.0.0 | abc123 | NULL |
 
 This is **Git-native**: a query for a specific commit SHA filters facts where `introduced_in` is in the commit's ancestry and `deleted_in` is either NULL or not in the ancestry.
+
+### 2.5.1 Optimized Read Model (Graph Index)
+
+For high-performance graph traversals (recursive CTEs), the system maintains an optimized **Read Model** in the `graph_nodes` and `graph_edges` tables. 
+
+- **Sync Policy**: The read model is refreshed with configurable consistency. By default, it uses **Strict (Transactional) Sync**, ensuring that every fact insertion immediately updates the graph index. For massive ingestions, it can be configured for **Eventual Consistency**.
+- **Performance**: Queries target the flattened `graph_edges` table instead of performing complex aggregations over the raw `facts` table, resulting in 10x faster traversals on large repositories.
+- **Fallback**: If the read model is incomplete, queries automatically fall back to the atomic write model views.
+
+### 2.5.2 Extractor Versioning
+To ensure data trust, every fact is tagged with the version of the extractor that produced it. When the extractor's logic improves (e.g., better AST parsing), the system can identify and re-extract facts produced by older, potentially buggy versions. A global `schema_version` in the `version_metadata` table tracks the current state of the platform.
+
+### 2.5.2 AI Provenance & Grounding
+LLM-generated artifacts (requirements, summaries) include verifiable provenance. Every artifact stores the specific `fact_ids` used as context (`grounded_in`). A validation pass checks cited symbols against the context; if a hallucination is detected (e.g., citing a non-existent symbol ID), the artifact is flagged as unverified and its confidence is capped.
 
 ### 2.6 Declarative Analysis via SQL Views
 

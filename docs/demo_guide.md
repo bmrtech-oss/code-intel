@@ -110,8 +110,9 @@ The generation process is **fact-enhanced**, which is significantly more robust 
 3. **Prompt Construction**: The `/requirements` endpoint loads the current version’s symbol and call rows and passes them to `LLMUDF`, which serializes them into a prompt using the model-specific template from the prompts directory.
 4. **LLM Stage**: Ollama generates a JSON response describing epics, features, and stories; the server cleans and parses the response, extracts the first JSON object when needed, and produces structured requirements.
 5. **Traceability Stage**: When tasks include traceability metadata, or when the model output is fuzzy-matched back to symbols, the API inserts links into `requirement_traceability` so each requirement can be tied back to the original symbol IDs.
+6. **Provenance Stage**: The entire generated requirement is stored as an `LLMArtifact`, recording the specific `fact_ids` used as context (`grounded_in`), the exact prompt, and the model version. A validation pass automatically checks for hallucinations; if the model cites a symbol ID that wasn't in the context, the artifact is flagged as unverified.
 
-This is the same path used by the web API and the MCP server, which both rely on the same storage, prompt construction, and traceability steps.
+This is the same path used by the web API and the MCP server, which both rely on the same storage, prompt construction, and provenance steps.
 
 #### Why is this better than just using an LLM on raw code?
 

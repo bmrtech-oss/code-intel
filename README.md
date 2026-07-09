@@ -18,7 +18,10 @@ graph TB
         API[FastAPI]
         Workspace[Workspace Manager<br/>Redis-backed Git-DAG]
         Engine[Dataflow Engine<br/>SQL + Recursive CTEs]
-        Store[(PostgreSQL + pgvector<br/>Versioned Facts)]
+        subgraph "Optimized Storage"
+            Store[(Write Model<br/>Append-only Facts)]
+            ReadModel[(Read Model<br/>Graph Index)]
+        end
     end
 
     subgraph "Ingestion Pipeline"
@@ -48,6 +51,7 @@ graph TB
 - **Bitset-Based Visibility**: Sub-microsecond ancestry filtering using O(1) bitwise operations, optimized for massive commit histories (>100k commits).
 - **True Delta (XOR) Sync**: High-performance incremental cache synchronization that only transmits and applies changes between commit states.
 - **Timeline Travel**: High-performance historical queries and interactive graph visualization of code structure at any commit SHA.
+- **Confidence-Weighted Analysis**: Every call edge is assigned a confidence score (0.0–1.0) based on resolution certainty (static vs. dynamic), providing an honest representation of ambiguity.
 - **Hybrid Semantic Search**: Combines structural code identity with BGE-small embeddings via `txtai` for natural language code search.
 - **MCP-Native**: First-class Model Context Protocol (MCP) server for seamless integration with AI assistants like Claude Code.
 - **Multi-Repo Dependency Detection**: Cross-repo import tracking for Python, TypeScript, and Go, unified as `IMPORTS_FROM` edges.
