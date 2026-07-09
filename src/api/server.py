@@ -1,5 +1,4 @@
 import re
-import uuid
 import json
 from ..utils.traceability import fuzzy_match_symbols
 from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks
@@ -113,7 +112,6 @@ class QueryRequest(BaseModel):
 @app.post("/analyze")
 async def analyze(req: AnalyzeRequest, background_tasks: BackgroundTasks, db: AsyncSession = Depends(get_db)):
     version = req.version or str(int(datetime.utcnow().timestamp()))
-    storage = VersionedStorage(db)
     actual_path = req.repo_path
     temp_handler = None
     if is_git_url(req.repo_path):

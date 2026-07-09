@@ -22,6 +22,42 @@ Most code intelligence systems (e.g., CodeQL, Sourcegraph, commercial tools) use
 
 ## 2. Architecture Overview
 
+### 2.0 End-to-End Workflow: Ingestion to Outcome
+
+The following diagram illustrates the complete dataflow from raw source code to high-level requirements and insights.
+
+```mermaid
+graph LR
+    subgraph "Ingestion Stage"
+        SRC[Source Code<br/>Git/Local/Zip] --> Walker[File Walker]
+        Walker --> Parser[AST Parser<br/>tree-sitter]
+    end
+
+    subgraph "Processing Stage"
+        Parser --> Facts[Atomic Facts<br/>Symbols/Calls]
+        Facts --> Store[(Versioned Store<br/>PostgreSQL)]
+        Store --> Cache[In-Memory Cache<br/>XOR Sync]
+    end
+
+    subgraph "Outcome Stage"
+        Cache --> Tools[MCP Tools / API]
+        Tools --> Req[LLM Requirements]
+        Tools --> Graph[Graph Explorer]
+        Tools --> Impact[Impact Analysis]
+    end
+```
+
+### 2.0.1 Supported Ingestion Sources
+
+Code-Intel is designed to be source-agnostic, supporting several ingestion workflows:
+
+1. **Local Directory**: Index any local folder directly via the CLI or API.
+2. **Git Repositories**: Provide a Git HTTPS/SSH URL. The system clones the repo, performs a full topological crawl of the history, and indexes specified branches/commits.
+3. **ZIP/Tarball Archives**: Upload compressed source code for quick analysis without Git history.
+4. **Cloud Storage (S3/Azure Blob)**: (Future) Direct ingestion from cloud buckets for massive datasets.
+5. **CI/CD Integration**: Ingest facts as a post-commit hook or build step to keep the platform continuously updated.
+
+
 The system is a **single-binary** (or container) that ingests source code, stores **atomic facts** in a versioned SQL database, and derives all insights via declarative queries.
 
 ```mermaid

@@ -1,5 +1,4 @@
 import pytest
-import asyncio
 import os
 import shutil
 from src.semantic.indexer import SemanticIndexer

@@ -1,5 +1,4 @@
 import pytest
-import asyncio
 from src.storage.bitemporal_adapter import BiTemporalAdapter
 
 class MockEngine:

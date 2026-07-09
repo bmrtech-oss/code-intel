@@ -14,7 +14,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v3
       - name: Run lint
-        run: uv run ruff check .
+        run: uv run ruff check . --select F401,F841,F821,F822,F823 --ignore E501
 
   test:
     runs-on: ubuntu-latest

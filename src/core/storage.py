@@ -1,7 +1,7 @@
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import text
-from .models import Fact, Symbol
+from .models import Fact
 from typing import Optional, List, Dict
 import os
 from datetime import datetime

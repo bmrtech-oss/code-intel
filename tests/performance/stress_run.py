@@ -1,7 +1,5 @@
 import asyncio
 import time
-import os
-import shutil
 import logging
 from git import Repo
 from src.core.git_handler import GitRepoHandler

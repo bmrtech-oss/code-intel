@@ -1,6 +1,5 @@
 import pytest
-import asyncio
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 from src.cache.cdc_listener import CDCListener
 from src.cache.cache_bootstrap import CacheBootstrap
 from src.cache.memory_cache import MemoryCache

@@ -1,7 +1,6 @@
 import pytest
 from unittest.mock import AsyncMock
 from src.lang.cs_handler import CSharpVisitor
-import os
 
 @pytest.mark.asyncio
 async def test_cs_handler():

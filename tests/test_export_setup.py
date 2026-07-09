@@ -1,11 +1,8 @@
 import asyncio
-import sqlite3
 import os
-import json
 from datetime import datetime, timedelta
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.ext.asyncio import create_async_engine
 
 # Mocking the environment for the exporter
 os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///test_legacy.db"
