@@ -33,16 +33,38 @@ class MemoryCache:
         self.last_sync_marker = sha
         logger.info(f"Cache populated for SHA {sha} with {len(symbols)} symbols and {len(calls)} calls.")
 
-    async def apply_delta(self, delta: Dict[str, Any], new_sha: str, new_ancestry_step: str):
-        # Update visibility for new SHA
-        # In this simple implementation, the engine returns the FULL visibility set for the new SHA.
-        # To avoid duplication, we replace rather than append.
-        self.symbols = delta.get("nodes", [])
-        self.calls = delta.get("edges", [])
-            
+    async def apply_delta(self, delta: Dict[str, Any], new_sha: str):
+        """
+        Applies a True Delta (XOR) to the cache.
+        """
+        added_nodes = delta.get("added_nodes", [])
+        removed_nodes = delta.get("removed_nodes", [])
+        added_edges = delta.get("added_edges", [])
+        removed_edges = delta.get("removed_edges", [])
+        new_ancestry = delta.get("new_ancestry", [])
+
+        # Incremental Node Update
+        if removed_nodes:
+            removed_ids = {n["id"] for n in removed_nodes if "id" in n}
+            self.symbols = [n for n in self.symbols if n.get("id") not in removed_ids]
+        
+        self.symbols.extend(added_nodes)
+
+        # Incremental Edge Update
+        def edge_key(e):
+            return (e.get("from"), e.get("to"), e.get("type"))
+
+        if removed_edges:
+            removed_keys = {edge_key(e) for e in removed_edges}
+            self.calls = [e for e in self.calls if edge_key(e) not in removed_keys]
+        
+        self.calls.extend(added_edges)
+
         self.active_sha = new_sha
-        self.ancestry_set.add(new_ancestry_step)
+        self.ancestry_set = set(new_ancestry)
         self.last_sync_marker = new_sha
+        
+        logger.info(f"Cache delta applied for {new_sha}: +{len(added_nodes)}/-{len(removed_nodes)} nodes, +{len(added_edges)}/-{len(removed_edges)} edges.")
 
     async def get_symbols(self, filters: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         CACHE_QUERY_TOTAL.labels(method='get_symbols').inc()

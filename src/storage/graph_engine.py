@@ -70,8 +70,42 @@ class SimpleGraphEngine:
         return results
 
     async def get_delta(self, from_sha: Optional[str], to_sha: str) -> Dict[str, Any]:
-        # Simplification: return everything for to_sha if from_sha is None
-        ancestry = await self.topological_lookback_query(to_sha)
-        nodes = await self.query_nodes(ancestry, "DefNode")
-        edges = await self.query_edges(ancestry, "CALLS")
-        return {"nodes": nodes, "edges": edges}
+        ancestry_to = await self.topological_lookback_query(to_sha)
+        nodes_to = await self.query_nodes(ancestry_to, "DefNode")
+        edges_to = await self.query_edges(ancestry_to, "CALLS")
+
+        if from_sha is None:
+            return {
+                "added_nodes": nodes_to,
+                "removed_nodes": [],
+                "added_edges": edges_to,
+                "removed_edges": [],
+                "new_ancestry": ancestry_to
+            }
+
+        ancestry_from = await self.topological_lookback_query(from_sha)
+        nodes_from = await self.query_nodes(ancestry_from, "DefNode")
+        edges_from = await self.query_edges(ancestry_from, "CALLS")
+
+        node_id_to = {n["id"]: n for n in nodes_to if "id" in n}
+        node_id_from = {n["id"]: n for n in nodes_from if "id" in n}
+
+        added_nodes = [n for nid, n in node_id_to.items() if nid not in node_id_from]
+        removed_nodes = [n for nid, n in node_id_from.items() if nid not in node_id_to]
+
+        def edge_key(e):
+            return (e.get("from"), e.get("to"), e.get("type"))
+
+        edge_id_to = {edge_key(e): e for e in edges_to}
+        edge_id_from = {edge_key(e): e for e in edges_from}
+
+        added_edges = [e for key, e in edge_id_to.items() if key not in edge_id_from]
+        removed_edges = [e for key, e in edge_id_from.items() if key not in edge_id_to]
+
+        return {
+            "added_nodes": added_nodes,
+            "removed_nodes": removed_nodes,
+            "added_edges": added_edges,
+            "removed_edges": removed_edges,
+            "new_ancestry": ancestry_to
+        }
