@@ -162,7 +162,46 @@ The script launches lightweight container-backed mock servers, populates them wi
 - Use a reverse proxy (Nginx) with HTTPS and authentication.
 - Set up monitoring with Prometheus + Grafana.
 
+## Local Development
+
+If you prefer a local flow using `venv` and standard Python tools instead of containers:
+
+### 1. Backend Setup (Python)
+
+Ensure you have [uv](https://github.com/astral-sh/uv) installed.
+
+```bash
+# 1. Install dependencies and create venv
+uv sync
+
+# 2. Configure environment (customize for your local Postgres/Redis)
+export DATABASE_URL="postgresql+asyncpg://postgres:password@localhost:5432/codeintel"
+export REDIS_HOST="localhost"
+export USE_BITEMPORAL="true"
+
+# 3. Run database migrations
+uv run alembic upgrade head
+
+# 4. Start the FastAPI server
+uv run fastapi dev src/api/server.py
+```
+
+### 2. Frontend Setup (React)
+
+```bash
+cd ui
+npm install
+npm run dev
+```
+
+### 3. Local LLM (Ollama)
+
+Run Ollama locally and pull the required model:
+```bash
+ollama run phi3:mini
+```
+
 ## Notes
 
 - The repository contains `pyproject.toml` and other project files; check them for dependency and packaging guidance.
-- If you want a local development flow using `venv` and Python tools instead of containers, tell me and I can add a "Local development" section with commands.
+- For detailed client interaction, see [docs/client_usage_guide.md](docs/client_usage_guide.md).
