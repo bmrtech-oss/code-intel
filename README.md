@@ -1,80 +1,211 @@
-# Expected Code-Intel Output for Example Projects
+# Code Intelligence Platform (Code-Intel)
 
-This document describes the facts and requirements that Code-Intel is expected to generate for the sample projects in the `examples/` directory.
+Code-Intel is a production-ready, bi-temporal code intelligence platform built on a **Unified Data Plane**. It tracks code structure directly against a Git Directed Acyclic Graph (DAG) using a topological schema, enabling sub-millisecond historical queries, impact analysis, and LLM-driven requirements generation.
 
-## 1. COBOL Example (`examples/cobol/hello.cbl`)
+## 🏗️ Architecture Overview
 
-### Extracted Symbols
-| FQN | Kind | Line | Extractor Version |
-|-----|------|------|-------------------|
-| HELLO-WORLD | program | 2 | 1.0.0 |
+The system integrates source code ingestion, atomic fact storage in a versioned SQL database, and declarative insights via a Git-aware dataflow engine.
 
-### Generated Requirements (Sample)
-- **Epic**: Basic COBOL Program Execution
-- **Feature**: Hello World Display
-- **User Story**: As a developer, I want the program to display "Hello, world" so that I can verify the runtime environment is working.
+```mermaid
+graph TB
+    subgraph "User Interfaces"
+        CLI[CLI<br/>Typer]
+        WebUI[Web UI<br/>React]
+        MCP[MCP Server<br/>FastMCP]
+    end
 
----
+    subgraph "Unified Data Plane"
+        API[FastAPI]
+        Workspace[Workspace Manager<br/>Redis-backed Git-DAG]
+        Engine[Dataflow Engine<br/>SQL + Recursive CTEs]
+        subgraph "Optimized Storage"
+            Store[(Write Model<br/>Append-only Facts)]
+            ReadModel[(Read Model<br/>Graph Index)]
+        end
+    end
 
-## 2. Java Example (`examples/java/HelloWorld.java`)
+    subgraph "Ingestion Pipeline"
+        Walker[File Walker]
+        Parser[tree-sitter AST Handlers]
+        FactInserter[Fact Inserter]
+    end
 
-### Extracted Symbols
-| FQN | Kind | Line | Extractor Version |
-|-----|------|------|-------------------|
-| HelloWorld | class | 3 | 1.0.0 |
-| HelloWorld.main | method | 4 | 1.0.0 |
-| HelloWorld.sayHello | method | 8 | 1.0.0 |
+    subgraph "LLM Integration"
+        Ollama[Ollama / vLLM]
+    end
 
-### Generated Requirements (Sample)
-- **Epic**: Java Application Entry Points
-- **Feature**: Console Output Management
-- **User Story**: As a user, I want to see a "Hello, World!" message on the console when the application starts.
+    CLI --> API
+    WebUI --> API
+    MCP --> API
+    API --> Workspace
+    API --> Engine
+    Engine --> Store
+    Walker --> Parser --> FactInserter --> Store
+    API --> Ollama
+```
 
----
+## 🚀 Key Features
 
-## 3. Python Example (`examples/python/app.py`)
+- **Unified Fact Model**: All code data (symbols, calls, data flows) stored as versioned relational facts.
+- **Git-DAG Topological Schema**: Native support for branches, merges, and rebases using `introduced_in`, `modified_in`, and `deleted_in` metadata.
+- **Bitset-Based Visibility**: Sub-microsecond ancestry filtering using O(1) bitwise operations, optimized for massive commit histories (>100k commits).
+- **True Delta (XOR) Sync**: High-performance incremental cache synchronization that only transmits and applies changes between commit states.
+- **Timeline Travel**: High-performance historical queries and interactive graph visualization of code structure at any commit SHA.
+- **Confidence-Weighted Analysis**: Every call edge is assigned a confidence score (0.0–1.0) based on resolution certainty (static vs. dynamic), providing an honest representation of ambiguity.
+- **Hybrid Semantic Search**: Combines structural code identity with BGE-small embeddings via `txtai` for natural language code search.
+- **MCP-Native**: First-class Model Context Protocol (MCP) server for seamless integration with AI assistants like Claude Code.
+- **Multi-Repo Dependency Detection**: Cross-repo import tracking for Python, TypeScript, and Go, unified as `IMPORTS_FROM` edges.
+- **Declarative Analysis**: New analyses (e.g., dead code, impact) are simple SQL views, not complex code.
+- **LLM as a UDF**: Requirements generation is a first-class query inside the database flow.
 
-### Extracted Symbols
-| FQN | Kind | Line | Extractor Version |
-|-----|------|------|-------------------|
-| app.Processor | class | 1 | 1.0.0 |
-| app.Processor.process | method | 2 | 1.0.0 |
-| app.main | function | 6 | 1.0.0 |
+## 🔄 System Flow
 
-### Extracted Calls (with Confidence)
-| Caller | Callee | Confidence | Extractor Version | Reason |
-|--------|--------|------------|-------------------|--------|
-| app.main | Processor | 1.0 | 1.0.0 | Direct call |
-| app.main | p.process | 0.5 | 1.0.0 | Attribute call (heuristic) |
-| app.Processor.process | getattr | 0.3 | 1.0.0 | Dynamic call |
+```mermaid
+sequenceDiagram
+    participant Dev as Developer / AI Assistant
+    participant API as FastAPI / MCP
+    participant Cache as Memory Cache (O(1))
+    participant Adapter as BiTemporalAdapter
+    participant Engine as Graph Engine (Git-DAG)
 
-### Extracted Cross-Repo Imports
-| Caller | Module | Target Repo | Target SHA | Resolved At |
-|--------|--------|-------------|------------|-------------|
-| app.Processor | requests | https://github.com/psf/requests | 2b5c7... | 2025-04-20T10:00:00Z |
+    Dev->>API: query_call_graph(commit_sha="b8f2")
+    API->>Cache: check_active_state("b8f2")
+    Cache-->>API: result (if hit)
+    API->>Adapter: get_calls("b8f2")
+    Adapter->>Engine: topological_lookback("b8f2")
+    Engine-->>Adapter: filtered visibility set
+    Adapter-->>API: call network
+    API-->>Dev: JSON / Graph Result
+```
 
----
+## 🛠️ Setup
 
-## 4. C# Example (`examples/csharp/Program.cs`)
+```bash
+# Clone or create project
+./create-project-uv-prod.sh
 
-### Extracted Symbols
-| FQN | Kind | Line | Extractor Version |
-|-----|------|------|-------------------|
-| Program | class | 5 | 1.0.0 |
-| Program.Main | method | 7 | 1.0.0 |
-| Program.SayHello | method | 12 | 1.0.0 |
+# Start all services (Linux/macOS). On Windows use a compatible container runtime.
+podman-compose up -d
 
-### Generated Requirements (Sample)
-- **Epic**: C# Application Core
-- **Feature**: Greeting Service
-- **User Story**: As a developer, I want a `SayHello` method that prints a C#-specific greeting to the console.
+# Run database migrations
+podman exec -it codeintel-api alembic upgrade head
 
----
+# Pull a model into Ollama
+podman exec -it codeintel-ollama ollama pull phi3:mini
+```
 
-## 5. Sample LLM Artifact (Provenance)
+## Usage
 
-### Requirement Artifact
-| ID | Type | Grounded In (Fact IDs) | Is Verified | Confidence |
-|----|------|------------------------|-------------|------------|
-| 101 | requirement | [1, 5, 12, 18] | True | 1.0 |
-| 102 | summary | [3, 7] | False | 0.5 |
+- API docs: http://localhost:8000/docs
+- Analyze a repo:
+	```bash
+	curl -X POST http://localhost:8000/analyze \
+		-H "Content-Type: application/json" \
+		-d '{"repo_path": "/repo"}'
+	```
+- Query dead code at specific commit:
+	```bash
+	curl -X POST http://localhost:8000/query \
+		-H "Content-Type: application/json" \
+		-d '{"rule": "dead_code", "commit_sha": "abc123"}'
+	```
+- Semantic Search:
+	```bash
+	curl -X GET "http://localhost:8000/search?q=how+to+login"
+	```
+- Generate requirements:
+	```bash
+	curl -X POST http://localhost:8000/requirements
+	```
+
+## How parser output becomes requirements
+
+The requirements flow is an end-to-end pipeline that starts with AST extraction and ends with traceable requirements:
+
+1. The ingestion pipeline selects a language-specific visitor from the file extension and parses each source file into structured symbols and call edges.
+2. Those facts are written into the versioned storage layer as symbol and call records, so each result is tied to a specific repository version.
+3. The `/requirements` endpoint loads the current version’s facts and passes them to `LLMUDF`, which serializes them into a prompt using the model-specific template from the prompts directory.
+4. Ollama returns a JSON document describing epics, features, and stories; the server cleans and parses that response, stores traceability links in `requirement_traceability`, and returns the structured requirements to the client.
+5. The same pipeline is available through the MCP server, which exposes the same requirements workflow to AI assistants.
+
+## Documentation Index
+
+The repository documentation set lives under [docs](docs):
+
+- [INSTALL.md](INSTALL.md) — full local setup guide, including prerequisites, services, and a sample repository walkthrough.
+- [docs/demo_guide.md](docs/demo_guide.md) — step-by-step feature demo from ingestion through requirements generation.
+- [docs/code-intel-design.md](docs/code-intel-design.md) — high-level system design and architecture notes.
+- [docs/code-intel-nxt.md](docs/code-intel-nxt.md) — next-step roadmap and product direction.
+- [docs/conde-intel-nxt-prompts.md](docs/conde-intel-nxt-prompts.md) — prompt and workflow notes for the next-generation experience.
+- [docs/how-code-intel-is-different.md](docs/how-code-intel-is-different.md) — explanation of the platform’s differentiators.
+- [docs/mcp-ui-foundations.md](docs/mcp-ui-foundations.md) — current MCP server and UI foundation status.
+- [docs/use_cases_guide.md](docs/use_cases_guide.md) — practical use cases for modernization, impact analysis, history exploration, and AI-assisted development.
+- [docs/engine_benchmark_results.md](docs/engine_benchmark_results.md) — latest graph engine benchmark report.
+- [docs/code-intel-ai-review-results.md](docs/code-intel-ai-review-results.md) — review notes and findings for the current implementation direction.
+- [docs/schema/git_dag_schema.yaml](docs/schema/git_dag_schema.yaml) — Git-DAG schema definition.
+
+## MCP and UI Foundations
+
+For the local MCP server, workspace-info tool, and the initial three-panel UI shell, see [docs/mcp-ui-foundations.md](docs/mcp-ui-foundations.md).
+
+## Graph Engine Benchmarking
+
+To compare the mock Git-DAG query path for Memtrace and TerminusDB, run:
+
+```bash
+uv run python scripts/evaluate_graph_engines.py --runs 5
+```
+
+The script launches lightweight container-backed mock servers, populates them with synthetic commit and code-edge data, executes a topological ancestry lookup plus an edge filter, and writes a markdown comparison report to [docs/engine_benchmark_results.md](docs/engine_benchmark_results.md). CI also runs a smoke-test version of this workflow to keep the benchmark path covered automatically.
+
+## Production Considerations
+
+- Replace `postgres` with Azure Database for PostgreSQL Flexible Server.
+- Replace `redis` with Azure Cache for Redis.
+- Replace `ollama` with vLLM on GPU nodes.
+- Use a reverse proxy (Nginx) with HTTPS and authentication.
+- Set up monitoring with Prometheus + Grafana.
+
+## Local Development
+
+If you prefer a local flow using `venv` and standard Python tools instead of containers:
+
+### 1. Backend Setup (Python)
+
+Ensure you have [uv](https://github.com/astral-sh/uv) installed.
+
+```bash
+# 1. Install dependencies and create venv
+uv sync
+
+# 2. Configure environment (customize for your local Postgres/Redis)
+export DATABASE_URL="postgresql+asyncpg://postgres:password@localhost:5432/codeintel"
+export REDIS_HOST="localhost"
+export USE_BITEMPORAL="true"
+
+# 3. Run database migrations
+uv run alembic upgrade head
+
+# 4. Start the FastAPI server
+uv run fastapi dev src/api/server.py
+```
+
+### 2. Frontend Setup (React)
+
+```bash
+cd ui
+npm install
+npm run dev
+```
+
+### 3. Local LLM (Ollama)
+
+Run Ollama locally and pull the required model:
+```bash
+ollama run phi3:mini
+```
+
+## Notes
+
+- The repository contains `pyproject.toml` and other project files; check them for dependency and packaging guidance.
+- For detailed client interaction, see [docs/client_usage_guide.md](docs/client_usage_guide.md).
