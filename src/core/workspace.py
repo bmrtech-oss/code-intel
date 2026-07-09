@@ -50,4 +50,4 @@ class WorkspaceManager:
         return None
 
     async def close(self):
-        await self.redis.close()
+        await self.redis.aclose()

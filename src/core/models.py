@@ -1,6 +1,6 @@
 from sqlalchemy import Column, String, Integer, DateTime, Text, BigInteger, Float, UniqueConstraint
 from sqlalchemy.sql import func
-from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import declarative_base
 from pgvector.sqlalchemy import Vector
 from datetime import datetime
 
