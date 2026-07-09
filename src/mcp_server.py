@@ -122,6 +122,16 @@ TOOLS = [
         }
     ),
     types.Tool(
+        name="query_cross_repo_imports",
+        description="Get cross-repo imports for the codebase.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "commit_sha": {"type": "string"}
+            }
+        }
+    ),
+    types.Tool(
         name="predict_impact",
         description="Predict the blast radius of a code modification based on history.",
         inputSchema={
@@ -190,6 +200,25 @@ async def handle_call_tool(name: str, arguments: dict) -> list[types.TextContent
             else:
                 result = await rules.evaluate_rule("dead_code", version)
                 return [types.TextContent(type="text", text=json.dumps(result, indent=2))]
+
+        elif name == "query_cross_repo_imports":
+            if adapter:
+                imports = await adapter.get_calls(version, edge_type="IMPORTS_FROM")
+                return [types.TextContent(type="text", text=json.dumps(imports, indent=2))]
+            else:
+                # Fallback to direct fact query and map to edge schema
+                result = await storage.execute_query("SELECT * FROM facts WHERE version = :v AND entity_type = 'cross_repo_import'", {"v": version})
+                
+                # Group by entity_id to extract caller and module
+                mapped = {}
+                for row in result:
+                    eid = row["entity_id"]
+                    if eid not in mapped:
+                        mapped[eid] = {"from": eid.split("->")[0]}
+                    if row["attribute"] == "module":
+                        mapped[eid]["to"] = row["value"]
+                
+                return [types.TextContent(type="text", text=json.dumps(list(mapped.values()), indent=2))]
 
         elif name == "generate_requirements":
             udf = LLMUDF()

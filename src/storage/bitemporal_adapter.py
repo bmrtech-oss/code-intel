@@ -43,21 +43,21 @@ class BiTemporalAdapter:
             raise
 
     @ADAPTER_LOOKUP_TIME.labels(method='get_calls').time()
-    async def get_calls(self, commit_sha: str, caller_fqn: Optional[str] = None) -> List[Dict[str, Any]]:
+    async def get_calls(self, commit_sha: str, caller_fqn: Optional[str] = None, edge_type: str = "CALLS") -> List[Dict[str, Any]]:
         try:
             # Check cache first
             if self.cache_layer:
                 active_sha = await self.cache_layer.get_active_sha()
                 if commit_sha == active_sha:
                     ADAPTER_CACHE_HIT.labels(method='get_calls').inc()
-                    return await self.cache_layer.get_calls(caller_fqn)
+                    return await self.cache_layer.get_calls(caller_fqn, edge_type=edge_type)
 
             ADAPTER_CACHE_MISS.labels(method='get_calls').inc()
             ancestry = await self._get_ancestry(commit_sha)
             filters = {"from": caller_fqn} if caller_fqn else None
             return await self.engine_client.query_edges(
                 ancestry=ancestry,
-                edge_type="CALLS",
+                edge_type=edge_type,
                 filters=filters
             )
         except Exception:

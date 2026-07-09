@@ -82,13 +82,15 @@ class MemoryCache:
                     if match: results.append(s)
         return results
 
-    async def get_calls(self, caller_fqn: Optional[str] = None) -> List[Dict[str, Any]]:
+    async def get_calls(self, caller_fqn: Optional[str] = None, edge_type: Optional[str] = "CALLS") -> List[Dict[str, Any]]:
         CACHE_QUERY_TOTAL.labels(method='get_calls').inc()
         results = []
         for c in self.calls:
             if c.get("introduced_in") in self.ancestry_set:
                 deleted_in = c.get("deleted_in")
                 if deleted_in is None or deleted_in not in self.ancestry_set:
+                    if edge_type and c.get("type", "CALLS") != edge_type:
+                        continue
                     if caller_fqn and c.get("from") != caller_fqn:
                         continue
                     results.append(c)

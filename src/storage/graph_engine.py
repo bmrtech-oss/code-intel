@@ -55,7 +55,7 @@ class SimpleGraphEngine:
                     if match: results.append(n)
         return results
 
-    async def query_edges(self, ancestry: List[str], edge_type: str, filters: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    async def query_edges(self, ancestry: List[str], edge_type: Optional[str] = None, filters: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         ancestry_set = set(ancestry)
         results = []
         for e in self.edges:
@@ -63,7 +63,9 @@ class SimpleGraphEngine:
                 deleted_in = e.get("deleted_in")
                 if deleted_in is None or deleted_in not in ancestry_set:
                     match = True
-                    if filters:
+                    if edge_type and e.get("type", "CALLS") != edge_type:
+                        match = False
+                    if match and filters:
                         for k, v in filters.items():
                             if e.get(k) != v: match = False; break
                     if match: results.append(e)
@@ -72,7 +74,8 @@ class SimpleGraphEngine:
     async def get_delta(self, from_sha: Optional[str], to_sha: str) -> Dict[str, Any]:
         ancestry_to = await self.topological_lookback_query(to_sha)
         nodes_to = await self.query_nodes(ancestry_to, "DefNode")
-        edges_to = await self.query_edges(ancestry_to, "CALLS")
+        # Fetch ALL edge types for the delta
+        edges_to = await self.query_edges(ancestry_to, edge_type=None)
 
         if from_sha is None:
             return {
@@ -85,7 +88,7 @@ class SimpleGraphEngine:
 
         ancestry_from = await self.topological_lookback_query(from_sha)
         nodes_from = await self.query_nodes(ancestry_from, "DefNode")
-        edges_from = await self.query_edges(ancestry_from, "CALLS")
+        edges_from = await self.query_edges(ancestry_from, edge_type=None)
 
         node_id_to = {n["id"]: n for n in nodes_to if "id" in n}
         node_id_from = {n["id"]: n for n in nodes_from if "id" in n}

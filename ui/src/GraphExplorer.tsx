@@ -12,31 +12,45 @@ const GraphExplorer = () => {
 
       try {
         // Fetch calls for the current commit
-        const response = await fetch('http://localhost:8000/query', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            rule: 'query_call_graph',
-            commit_sha: currentSha
-          })
-        });
-        const data = await response.json();
-        const calls = data.result || [];
+        const fetchResource = async (rule: string) => {
+          const response = await fetch('http://localhost:8000/query', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              rule: rule,
+              commit_sha: currentSha
+            })
+          });
+          const data = await response.json();
+          return data.result || [];
+        };
+
+        const calls = await fetchResource('query_call_graph');
+        const imports = await fetchResource('query_cross_repo_imports');
 
         const newElements: any[] = [];
         const nodes = new Set<string>();
 
+        const addNode = (id: string, kind?: string) => {
+          if (!nodes.has(id)) {
+            newElements.push({ data: { id, label: id, kind } });
+            nodes.add(id);
+          }
+        };
+
         calls.forEach((call: any) => {
-          if (!nodes.has(call.from)) {
-            newElements.push({ data: { id: call.from, label: call.from } });
-            nodes.add(call.from);
-          }
-          if (!nodes.has(call.to)) {
-            newElements.push({ data: { id: call.to, label: call.to } });
-            nodes.add(call.to);
-          }
+          addNode(call.from);
+          addNode(call.to);
           newElements.push({
             data: { source: call.from, target: call.to, label: 'calls' }
+          });
+        });
+
+        imports.forEach((imp: any) => {
+          addNode(imp.from);
+          addNode(imp.to, 'external');
+          newElements.push({
+            data: { source: imp.from, target: imp.to, label: 'imports', type: 'IMPORTS_FROM' }
           });
         });
 
