@@ -2,37 +2,12 @@
 
 This document describes the facts and requirements that Code-Intel is expected to generate for the sample projects in the `examples/` directory.
 
-## 0. Python Example (`examples/python/app.py`)
-
-### Extracted Symbols
-| FQN | Kind | Line |
-|-----|------|------|
-| used_function | function | 1 |
-| dead_function | function | 5 |
-
-### Call Graph (Edges)
-| From | To |
-|------|----|
-| __main__ | used_function |
-
-### Dead Code Detection Results
-| Symbol ID | Reason |
-|-----------|--------|
-| app.dead_function | Zero incoming call edges from active entry points. |
-
-### Generated Requirements (Sample)
-- **Epic**: Python Application Core
-- **Feature**: Utility Functions
-- **User Story**: As a developer, I want a `used_function` that provides core utility logic to the main entry point.
-
----
-
 ## 1. COBOL Example (`examples/cobol/hello.cbl`)
 
 ### Extracted Symbols
-| FQN | Kind | Line |
-|-----|------|------|
-| HELLO-WORLD | program | 2 |
+| FQN | Kind | Line | Extractor Version |
+|-----|------|------|-------------------|
+| HELLO-WORLD | program | 2 | 1.0.0 |
 
 ### Generated Requirements (Sample)
 - **Epic**: Basic COBOL Program Execution
@@ -44,11 +19,11 @@ This document describes the facts and requirements that Code-Intel is expected t
 ## 2. Java Example (`examples/java/HelloWorld.java`)
 
 ### Extracted Symbols
-| FQN | Kind | Line |
-|-----|------|------|
-| HelloWorld | class | 3 |
-| HelloWorld.main | method | 4 |
-| HelloWorld.sayHello | method | 8 |
+| FQN | Kind | Line | Extractor Version |
+|-----|------|------|-------------------|
+| HelloWorld | class | 3 | 1.0.0 |
+| HelloWorld.main | method | 4 | 1.0.0 |
+| HelloWorld.sayHello | method | 8 | 1.0.0 |
 
 ### Generated Requirements (Sample)
 - **Epic**: Java Application Entry Points
@@ -57,16 +32,49 @@ This document describes the facts and requirements that Code-Intel is expected t
 
 ---
 
-## 3. C# Example (`examples/csharp/Program.cs`)
+## 3. Python Example (`examples/python/app.py`)
 
 ### Extracted Symbols
-| FQN | Kind | Line |
-|-----|------|------|
-| Program | class | 5 |
-| Program.Main | method | 7 |
-| Program.SayHello | method | 12 |
+| FQN | Kind | Line | Extractor Version |
+|-----|------|------|-------------------|
+| app.Processor | class | 1 | 1.0.0 |
+| app.Processor.process | method | 2 | 1.0.0 |
+| app.main | function | 6 | 1.0.0 |
+
+### Extracted Calls (with Confidence)
+| Caller | Callee | Confidence | Extractor Version | Reason |
+|--------|--------|------------|-------------------|--------|
+| app.main | Processor | 1.0 | 1.0.0 | Direct call |
+| app.main | p.process | 0.5 | 1.0.0 | Attribute call (heuristic) |
+| app.Processor.process | getattr | 0.3 | 1.0.0 | Dynamic call |
+
+### Extracted Cross-Repo Imports
+| Caller | Module | Target Repo | Target SHA | Resolved At |
+|--------|--------|-------------|------------|-------------|
+| app.Processor | requests | https://github.com/psf/requests | 2b5c7... | 2025-04-20T10:00:00Z |
+
+---
+
+## 4. C# Example (`examples/csharp/Program.cs`)
+
+### Extracted Symbols
+| FQN | Kind | Line | Extractor Version |
+|-----|------|------|-------------------|
+| Program | class | 5 | 1.0.0 |
+| Program.Main | method | 7 | 1.0.0 |
+| Program.SayHello | method | 12 | 1.0.0 |
 
 ### Generated Requirements (Sample)
 - **Epic**: C# Application Core
 - **Feature**: Greeting Service
 - **User Story**: As a developer, I want a `SayHello` method that prints a C#-specific greeting to the console.
+
+---
+
+## 5. Sample LLM Artifact (Provenance)
+
+### Requirement Artifact
+| ID | Type | Grounded In (Fact IDs) | Is Verified | Confidence |
+|----|------|------------------------|-------------|------------|
+| 101 | requirement | [1, 5, 12, 18] | True | 1.0 |
+| 102 | summary | [3, 7] | False | 0.5 |
