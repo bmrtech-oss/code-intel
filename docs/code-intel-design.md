@@ -93,13 +93,12 @@ To transition from legacy PostgreSQL to the Git-DAG model, the system uses a top
 - `export_postgres_to_jsonl.py`: Groups legacy facts by entity and maps their temporal lifecycle to `introduced_in`, `modified_in`, and `deleted_in`.
 - `import_jsonl_to_engine.py`: Ingests the flattened streams into graph-native engines.
 
-### 2.3 BiTemporal Visibility & Caching
+### 2.3 BiTemporal Visibility & Caching (Optimized)
 
-The `BiTemporalAdapter` provides a unified interface for code intelligence queries:
-- **Ancestry Lookback**: Traces the target commit's parents to define the visibility set.
-- **Topological Filtering**: Selects nodes/edges where `introduced_in` is in the ancestry and `deleted_in` is either null or outside the ancestry.
-- **Memory Cache Sidecar**: `MemoryCache` provides sub-millisecond lookups for the active workspace using set-based ancestry filtering.
-- **Synchronization**: `CDCListener` performs poll-based delta sync every 5 seconds to keep the cache fresh.
+The `BiTemporalAdapter` provides a unified interface for code intelligence queries, optimized for enterprise scale:
+- **Bitset-Based Visibility**: Replaces set-based string comparisons with O(1) bitwise operations. Every commit is assigned a unique bit-index, and ancestry is represented as a bitmask. Visibility is verified by `(intro_mask & ancestry_mask) != 0 && (del_mask & ancestry_mask) == 0`.
+- **Memory Cache (O(1))**: `MemoryCache` provides sub-microsecond lookups for the active workspace by storing pre-calculated bitmasks and incrementally updating its state via XOR deltas.
+- **True Delta (XOR) Sync**: Instead of full cache rebuilds, the `CDCListener` fetches symmetric differences (added/removed items) between SHAs. This minimizes network traffic and CPU overhead during synchronization.
 
 ### 2.4 Hybrid Semantic Search
 

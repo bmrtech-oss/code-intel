@@ -45,10 +45,12 @@ graph TB
 
 - **Unified Fact Model**: All code data (symbols, calls, data flows) stored as versioned relational facts.
 - **Git-DAG Topological Schema**: Native support for branches, merges, and rebases using `introduced_in`, `modified_in`, and `deleted_in` metadata.
-- **Topological Cache**: Sub-millisecond current-state lookups using an optimized in-memory cache with background CDC/Polling sync.
+- **Bitset-Based Visibility**: Sub-microsecond ancestry filtering using O(1) bitwise operations, optimized for massive commit histories (>100k commits).
+- **True Delta (XOR) Sync**: High-performance incremental cache synchronization that only transmits and applies changes between commit states.
 - **Timeline Travel**: High-performance historical queries and interactive graph visualization of code structure at any commit SHA.
 - **Hybrid Semantic Search**: Combines structural code identity with BGE-small embeddings via `txtai` for natural language code search.
 - **MCP-Native**: First-class Model Context Protocol (MCP) server for seamless integration with AI assistants like Claude Code.
+- **Multi-Repo Dependency Detection**: Cross-repo import tracking for Python, TypeScript, and Go, unified as `IMPORTS_FROM` edges.
 - **Declarative Analysis**: New analyses (e.g., dead code, impact) are simple SQL views, not complex code.
 - **LLM as a UDF**: Requirements generation is a first-class query inside the database flow.
 

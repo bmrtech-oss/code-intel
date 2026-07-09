@@ -1,0 +1,96 @@
+# Code-Intel Client Usage Guide
+
+This guide describes how to interact with the Code-Intel platform via its API and Model Context Protocol (MCP) server for advanced code analysis, timeline travel, and cross-repo dependency tracking.
+
+## 1. Model Context Protocol (MCP) Integration
+
+Code-Intel provides a first-class MCP server that can be integrated with AI assistants like Claude Code.
+
+### Configuration
+Expose the server using a `.mcp.json` or by adding it to your Claude Desktop config:
+```json
+{
+  "mcpServers": {
+    "code-intel": {
+      "command": "uv",
+      "args": ["run", "python", "-m", "src.mcp_server"],
+      "env": {
+        "DATABASE_URL": "postgresql+asyncpg://...",
+        "USE_BITEMPORAL": "true"
+      }
+    }
+  }
+}
+```
+
+### Key MCP Tools
+
+| Tool | Description |
+|------|-------------|
+| `query_call_graph` | Get the transitive call graph for a function at a specific commit. |
+| `query_cross_repo_imports` | List external dependencies (Python, TS, Go) for the codebase. |
+| `query_dead_code` | Find functions that are never called in the current topological state. |
+| `query_impact` | Perform blast-radius analysis for a symbol. |
+| `predict_impact` | Predict potential impact based on historical modification patterns. |
+| `semantic_search` | Search the codebase using natural language. |
+| `generate_requirements` | Generate Epics and User Stories with traceability back to code symbols. |
+
+---
+
+## 2. API Usage (REST)
+
+The platform exposes a FastAPI backend at `http://localhost:8000`.
+
+### Timeline Travel (Topological Query)
+Query the state of the codebase at any arbitrary Git commit SHA:
+```bash
+curl -X POST http://localhost:8000/query \
+  -H "Content-Type: application/json" \
+  -d '{
+    "rule": "query_call_graph",
+    "commit_sha": "a1b2c3d4",
+    "function": "auth.login"
+  }'
+```
+
+### Cross-Repo Analysis
+Identify external dependencies across polyglot microservices:
+```bash
+curl -X POST http://localhost:8000/query \
+  -H "Content-Type: application/json" \
+  -d '{
+    "rule": "query_cross_repo_imports",
+    "commit_sha": "head"
+  }'
+```
+
+### Impact Prediction
+Use historical data to predict the effect of a proposed change:
+```bash
+curl -X POST http://localhost:8000/query \
+  -H "Content-Type: application/json" \
+  -d '{
+    "rule": "predict_impact",
+    "symbol": "payment.process_refund"
+  }'
+```
+
+---
+
+## 3. High-Performance Features
+
+### Bitset-Based Visibility
+The platform uses bitset-based filtering for ancestry lookups. When querying large repositories (>100k commits), filtering happens in sub-microseconds. Clients can verify this performance by checking the `X-Cache-Status: hit` header in API responses.
+
+### XOR Cache Synchronization
+Clients connected to the MCP server benefit from incremental XOR synchronization. Instead of reloading the graph on every branch switch, the system only transmits the delta (added/removed items), ensuring an "instant" feel even for large enterprise codebases.
+
+---
+
+## 4. UI Explorer
+
+The Web UI (`http://localhost:5173`) provides an interactive Graph Explorer:
+1. **History Rail**: Navigate through Git commits on the left sidebar.
+2. **Relationship Toggle**: Toggle between `CALLS` and `IMPORTS_FROM` edges.
+3. **External Symbols**: Modules imported from other repositories are highlighted in the graph.
+4. **Context Info**: Click any node to see its `introduced_in` version and historical modifications.

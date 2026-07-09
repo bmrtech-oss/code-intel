@@ -31,10 +31,10 @@ class BiTemporalAdapter:
                     return await self.cache_layer.get_symbols(filters)
 
             ADAPTER_CACHE_MISS.labels(method='get_symbols').inc()
-            ancestry = await self._get_ancestry(commit_sha)
-            # Delegate filtering to the engine client
+            mask = await self.engine_client.get_ancestry_mask(commit_sha)
+            # Delegate filtering to the engine client using bitmask
             return await self.engine_client.query_nodes(
-                ancestry=ancestry,
+                mask=mask,
                 node_type="DefNode",
                 filters=filters
             )
@@ -53,10 +53,10 @@ class BiTemporalAdapter:
                     return await self.cache_layer.get_calls(caller_fqn, edge_type=edge_type)
 
             ADAPTER_CACHE_MISS.labels(method='get_calls').inc()
-            ancestry = await self._get_ancestry(commit_sha)
+            mask = await self.engine_client.get_ancestry_mask(commit_sha)
             filters = {"from": caller_fqn} if caller_fqn else None
             return await self.engine_client.query_edges(
-                ancestry=ancestry,
+                mask=mask,
                 edge_type=edge_type,
                 filters=filters
             )

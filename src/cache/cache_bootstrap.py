@@ -43,7 +43,8 @@ class CacheBootstrap:
             self.rebuild_progress = 100.0
             logger.info(f"Loaded {len(calls)} calls. (100%)")
             
-            await self.cache_layer.populate(symbols, calls, current_sha, ancestry)
+            mask = await self.engine_client.get_ancestry_mask(current_sha)
+            await self.cache_layer.populate(symbols, calls, current_sha, ancestry, mask=mask)
             
             duration = time.time() - start_time
             logger.info(f"Cache rebuild complete in {duration:.2f}s for SHA {current_sha}")
