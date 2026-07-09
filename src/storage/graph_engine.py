@@ -30,6 +30,8 @@ class SimpleGraphEngine:
         for e in self.edges:
             e["_intro_bit"] = 1 << self.sha_to_bit.get(e.get("introduced_in"), 999) if e.get("introduced_in") in self.sha_to_bit else 0
             e["_del_bit"] = 1 << self.sha_to_bit.get(e.get("deleted_in"), 999) if e.get("deleted_in") in self.sha_to_bit else 0
+            if "confidence" not in e:
+                e["confidence"] = 1.0
 
     def _build_ancestry_masks(self) -> Dict[str, int]:
         masks = {}

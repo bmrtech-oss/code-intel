@@ -100,9 +100,20 @@ class PythonVisitor:
             if function_node:
                 callee = self._node_text(function_node)
                 caller = ".".join([self.module_name] + self.current_scope)
-                await self.storage.insert_call(caller, callee, 1.0, self.version)
+                
+                confidence = 1.0
+                fn_kind = self._node_kind(function_node)
+                
+                # Heuristic: attribute access is likely polymorphic or cross-file
+                if fn_kind == "attribute":
+                    confidence = 0.5
+                # Dynamic reflection calls
+                elif callee in ("getattr", "setattr", "hasattr", "__import__", "exec", "eval"):
+                    confidence = 0.3
+                
+                await self.storage.insert_call(caller, callee, confidence, self.version)
 
-                if self._node_kind(function_node) == "attribute":
+                if fn_kind == "attribute":
                     await self.storage.insert_fact("dynamic_call", f"{caller}->{callee}", "type", "cross-file-candidate", self.version)
 
         elif kind == "import_from_statement":
@@ -112,7 +123,7 @@ class PythonVisitor:
                 # If it's not a local import, it's a cross-repo candidate
                 # This is a simplification; normally we'd check if module_name is in our indexed set
                 caller = ".".join([self.module_name] + self.current_scope)
-                await self.storage.insert_fact("cross_repo_import", f"{caller}->{module_name}", "module", module_name, self.version)
+                await self.storage.insert_cross_repo_import(caller, module_name, self.version)
 
         for child in self._iter_children(node):
             await self._visit(child)

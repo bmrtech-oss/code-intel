@@ -15,9 +15,13 @@ class ImpactPredictor:
         """
         Calculates predicted impact based on call graph AND historical co-modifications.
         """
-        # 1. Get structural dependencies (direct callers)
+        # 1. Get structural dependencies (direct callers) with confidence
         direct_callers = await self.adapter.get_calls(commit_sha)
-        structural_impact = {c["from"] for c in direct_callers if c["to"] == symbol_fqn}
+        structural_impact_weighted = {
+            c["from"]: c.get("confidence", 1.0) 
+            for c in direct_callers if c["to"] == symbol_fqn
+        }
+        structural_impact = set(structural_impact_weighted.keys())
         
         # 2. Get historical co-modifications
         # Fetch all symbols visible at this commit
@@ -46,7 +50,7 @@ class ImpactPredictor:
 
         return {
             "symbol": symbol_fqn,
-            "structural_callers": list(structural_impact),
+            "structural_callers": structural_impact_weighted,
             "historical_coupling": list(historical_impact),
             "predicted_blast_radius": list(structural_impact.union(historical_impact))
         }
