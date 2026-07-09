@@ -46,8 +46,10 @@ class SimpleGraphEngine:
             masks[sha] = mask
         
         # Support mock versions
-        if 'v1' not in masks: masks['v1'] = 0b1
-        if 'v2' not in masks: masks['v2'] = 0b11
+        if 'v1' not in masks:
+            masks['v1'] = 0b1
+        if 'v2' not in masks:
+            masks['v2'] = 0b11
         return masks
 
     def _load_jsonl(self, filename: str) -> List[Dict[str, Any]]:
@@ -58,8 +60,9 @@ class SimpleGraphEngine:
             return [json.loads(line) for line in f]
 
     async def get_current_branch_tip(self) -> str:
-        if not self.commits: return "head"
-        return self.commits[0]["sha"] # Latest commit
+        if not self.commits:
+            return "head"
+        return self.commits[0]["sha"]  # Latest commit
 
     async def get_ancestry_mask(self, sha: str) -> int:
         return self.ancestry_masks.get(sha, 0)
@@ -67,8 +70,10 @@ class SimpleGraphEngine:
     async def topological_lookback_query(self, sha: str) -> List[str]:
         # Keep for backward compatibility, but bitsets are preferred
         if sha.startswith('v'):
-            if sha == 'v1': return ['v1']
-            if sha == 'v2': return ['v1', 'v2']
+            if sha == 'v1':
+                return ['v1']
+            if sha == 'v2':
+                return ['v1', 'v2']
             return [sha]
 
         ancestry = []
@@ -77,7 +82,8 @@ class SimpleGraphEngine:
         while curr:
             ancestry.append(curr["sha"])
             parents = curr.get("parents", [])
-            if not parents: break
+            if not parents:
+                break
             curr = commit_map.get(parents[0])
         return ancestry
 
@@ -97,8 +103,11 @@ class SimpleGraphEngine:
                 match = True
                 if filters:
                     for k, v in filters.items():
-                        if n.get(k) != v: match = False; break
-                if match: results.append(n)
+                        if n.get(k) != v:
+                            match = False
+                            break
+                if match:
+                    results.append(n)
         return results
 
     async def query_edges(self, ancestry: Optional[List[str]] = None, edge_type: Optional[str] = None, filters: Optional[Dict[str, Any]] = None, mask: Optional[int] = None) -> List[Dict[str, Any]]:
@@ -118,8 +127,11 @@ class SimpleGraphEngine:
                     match = False
                 if match and filters:
                     for k, v in filters.items():
-                        if e.get(k) != v: match = False; break
-                if match: results.append(e)
+                        if e.get(k) != v:
+                            match = False
+                            break
+                if match:
+                    results.append(e)
         return results
 
     async def get_delta(self, from_sha: Optional[str], to_sha: str) -> Dict[str, Any]:

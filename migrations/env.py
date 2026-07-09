@@ -1,10 +1,13 @@
+import os
+import sys
 from logging.config import fileConfig
-from sqlalchemy import engine_from_config
-from sqlalchemy import pool
+
 from alembic import context
-import sys, os
+from sqlalchemy import engine_from_config, pool
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from src.core.models import Base
+
 target_metadata = Base.metadata
 config = context.config
 if config.config_file_name is not None:

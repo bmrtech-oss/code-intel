@@ -81,8 +81,11 @@ class MemoryCache:
                 match = True
                 if filters:
                     for k, v in filters.items():
-                        if s.get(k) != v: match = False; break
-                if match: results.append(s)
+                        if s.get(k) != v:
+                            match = False
+                            break
+                if match:
+                    results.append(s)
         return results
 
     async def get_calls(self, caller_fqn: Optional[str] = None, edge_type: Optional[str] = "CALLS") -> List[Dict[str, Any]]:

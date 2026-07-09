@@ -34,13 +34,13 @@ def extract_json(text: str):
     # Try to parse as is
     try:
         return json.loads(text)
-    except:
+    except (json.JSONDecodeError, ValueError):
         pass
     # Remove markdown fences
     cleaned = re.sub(r'^```json\s*|\s*```$', '', text.strip(), flags=re.MULTILINE)
     try:
         return json.loads(cleaned)
-    except:
+    except (json.JSONDecodeError, ValueError):
         pass
     # Find the outermost JSON object/array
     brace_count = 0
@@ -56,7 +56,7 @@ def extract_json(text: str):
                 candidate = text[start:i+1]
                 try:
                     return json.loads(candidate)
-                except:
+                except (json.JSONDecodeError, ValueError):
                     continue
     # Fallback: return raw text
     return {"raw": text, "error": "Could not parse JSON", "truncated": True}

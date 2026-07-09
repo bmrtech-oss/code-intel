@@ -18,7 +18,8 @@ class MockEngine:
         while curr:
             ancestry.append(curr["sha"])
             parents = curr.get("parents", [])
-            if not parents: break
+            if not parents:
+                break
             curr = commit_map.get(parents[0])
         return ancestry
 
@@ -32,8 +33,11 @@ class MockEngine:
                 match = True
                 if filters:
                     for k, v in filters.items():
-                        if n.get(k) != v: match = False; break
-                if match: results.append(n)
+                        if n.get(k) != v:
+                            match = False
+                            break
+                if match:
+                    results.append(n)
         return results
 
     async def query_edges(self, ancestry=None, edge_type=None, filters=None, mask=None):
@@ -46,8 +50,11 @@ class MockEngine:
                 match = True
                 if filters:
                     for k, v in filters.items():
-                        if e.get(k) != v: match = False; break
-                if match: results.append(e)
+                        if e.get(k) != v:
+                            match = False
+                            break
+                if match:
+                    results.append(e)
         return results
 
 @pytest.mark.asyncio

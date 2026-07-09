@@ -90,10 +90,13 @@ async def test_graph_engine_bitset_visibility():
     
     import json
     import os
+
     with open("commits.jsonl", "w") as f:
-        for c in commits: f.write(json.dumps(c) + "\n")
+        for c in commits:
+            f.write(json.dumps(c) + "\n")
     with open("nodes.jsonl", "w") as f:
-        for n in nodes: f.write(json.dumps(n) + "\n")
+        for n in nodes:
+            f.write(json.dumps(n) + "\n")
     
     engine = SimpleGraphEngine(data_dir=".")
     
