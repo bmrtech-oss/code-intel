@@ -22,6 +22,42 @@ Most code intelligence systems (e.g., CodeQL, Sourcegraph, commercial tools) use
 
 ## 2. Architecture Overview
 
+### 2.0 End-to-End Workflow: Ingestion to Outcome
+
+The following diagram illustrates the complete dataflow from raw source code to high-level requirements and insights.
+
+```mermaid
+graph LR
+    subgraph "Ingestion Stage"
+        SRC[Source Code<br/>Git/Local/Zip] --> Walker[File Walker]
+        Walker --> Parser[AST Parser<br/>tree-sitter]
+    end
+
+    subgraph "Processing Stage"
+        Parser --> Facts[Atomic Facts<br/>Symbols/Calls]
+        Facts --> Store[(Versioned Store<br/>PostgreSQL)]
+        Store --> Cache[In-Memory Cache<br/>XOR Sync]
+    end
+
+    subgraph "Outcome Stage"
+        Cache --> Tools[MCP Tools / API]
+        Tools --> Req[LLM Requirements]
+        Tools --> Graph[Graph Explorer]
+        Tools --> Impact[Impact Analysis]
+    end
+```
+
+### 2.0.1 Supported Ingestion Sources
+
+Code-Intel is designed to be source-agnostic, supporting several ingestion workflows:
+
+1. **Local Directory**: Index any local folder directly via the CLI or API.
+2. **Git Repositories**: Provide a Git HTTPS/SSH URL. The system clones the repo, performs a full topological crawl of the history, and indexes specified branches/commits.
+3. **ZIP/Tarball Archives**: Upload compressed source code for quick analysis without Git history.
+4. **Cloud Storage (S3/Azure Blob)**: (Future) Direct ingestion from cloud buckets for massive datasets.
+5. **CI/CD Integration**: Ingest facts as a post-commit hook or build step to keep the platform continuously updated.
+
+
 The system is a **single-binary** (or container) that ingests source code, stores **atomic facts** in a versioned SQL database, and derives all insights via declarative queries.
 
 ```mermaid
@@ -93,13 +129,12 @@ To transition from legacy PostgreSQL to the Git-DAG model, the system uses a top
 - `export_postgres_to_jsonl.py`: Groups legacy facts by entity and maps their temporal lifecycle to `introduced_in`, `modified_in`, and `deleted_in`.
 - `import_jsonl_to_engine.py`: Ingests the flattened streams into graph-native engines.
 
-### 2.3 BiTemporal Visibility & Caching
+### 2.3 BiTemporal Visibility & Caching (Optimized)
 
-The `BiTemporalAdapter` provides a unified interface for code intelligence queries:
-- **Ancestry Lookback**: Traces the target commit's parents to define the visibility set.
-- **Topological Filtering**: Selects nodes/edges where `introduced_in` is in the ancestry and `deleted_in` is either null or outside the ancestry.
-- **Memory Cache Sidecar**: `MemoryCache` provides sub-millisecond lookups for the active workspace using set-based ancestry filtering.
-- **Synchronization**: `CDCListener` performs poll-based delta sync every 5 seconds to keep the cache fresh.
+The `BiTemporalAdapter` provides a unified interface for code intelligence queries, optimized for enterprise scale:
+- **Bitset-Based Visibility**: Replaces set-based string comparisons with O(1) bitwise operations. Every commit is assigned a unique bit-index, and ancestry is represented as a bitmask. Visibility is verified by `(intro_mask & ancestry_mask) != 0 && (del_mask & ancestry_mask) == 0`.
+- **Memory Cache (O(1))**: `MemoryCache` provides sub-microsecond lookups for the active workspace by storing pre-calculated bitmasks and incrementally updating its state via XOR deltas.
+- **True Delta (XOR) Sync**: Instead of full cache rebuilds, the `CDCListener` fetches symmetric differences (added/removed items) between SHAs. This minimizes network traffic and CPU overhead during synchronization.
 
 ### 2.4 Hybrid Semantic Search
 

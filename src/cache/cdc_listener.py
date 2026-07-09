@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 from prometheus_client import Gauge, Summary
 
 logger = logging.getLogger(__name__)
@@ -44,8 +44,8 @@ class CDCListener:
         if current_sha != self.last_synced_sha:
             logger.info(f"Detected new SHA: {current_sha}. Fetching delta.")
             delta = await self.engine_client.get_delta(self.last_synced_sha, current_sha)
-            # The simple engine returns full ancestry step for the new sha
-            await self.cache_layer.apply_delta(delta, current_sha, current_sha)
+            mask = await self.engine_client.get_ancestry_mask(current_sha)
+            await self.cache_layer.apply_delta(delta, current_sha, new_mask=mask)
             self.last_synced_sha = current_sha
             logger.info(f"Cache synchronized to {current_sha}")
             

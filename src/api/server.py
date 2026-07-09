@@ -1,5 +1,4 @@
 import re
-import uuid
 import json
 from ..utils.traceability import fuzzy_match_symbols
 from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks
@@ -35,13 +34,13 @@ def extract_json(text: str):
     # Try to parse as is
     try:
         return json.loads(text)
-    except:
+    except (json.JSONDecodeError, ValueError):
         pass
     # Remove markdown fences
     cleaned = re.sub(r'^```json\s*|\s*```$', '', text.strip(), flags=re.MULTILINE)
     try:
         return json.loads(cleaned)
-    except:
+    except (json.JSONDecodeError, ValueError):
         pass
     # Find the outermost JSON object/array
     brace_count = 0
@@ -57,7 +56,7 @@ def extract_json(text: str):
                 candidate = text[start:i+1]
                 try:
                     return json.loads(candidate)
-                except:
+                except (json.JSONDecodeError, ValueError):
                     continue
     # Fallback: return raw text
     return {"raw": text, "error": "Could not parse JSON", "truncated": True}
@@ -113,7 +112,6 @@ class QueryRequest(BaseModel):
 @app.post("/analyze")
 async def analyze(req: AnalyzeRequest, background_tasks: BackgroundTasks, db: AsyncSession = Depends(get_db)):
     version = req.version or str(int(datetime.utcnow().timestamp()))
-    storage = VersionedStorage(db)
     actual_path = req.repo_path
     temp_handler = None
     if is_git_url(req.repo_path):

@@ -103,6 +103,15 @@ class GoVisitor:
                 if self._node_kind(function_node) == "selector_expression":
                     await self.storage.insert_fact("dynamic_call", f"{caller}->{callee}", "type", "cross-file-candidate", self.version)
 
+        elif kind == "import_spec":
+            path_node = node.child_by_field_name("path")
+            if path_node:
+                import_path = self._node_text(path_node).strip("'\"")
+                # Cross-repo Go imports typically contain a dot (e.g., github.com/...)
+                if "." in import_path:
+                    caller = ".".join([self.package_name] + self.current_scope)
+                    await self.storage.insert_fact("cross_repo_import", f"{caller}->{import_path}", "module", import_path, self.version)
+
         for child in self._iter_children(node):
             await self._visit(child)
 

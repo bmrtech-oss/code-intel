@@ -1,5 +1,4 @@
 import pytest
-import asyncio
 from src.storage.bitemporal_adapter import BiTemporalAdapter
 
 class MockEngine:
@@ -8,6 +7,10 @@ class MockEngine:
         self.nodes = nodes
         self.edges = edges
 
+    async def get_ancestry_mask(self, sha):
+        masks = {"c1": 0b1, "c2": 0b11}
+        return masks.get(sha, 0)
+
     async def topological_lookback_query(self, sha):
         ancestry = []
         commit_map = {c["sha"]: c for c in self.commits}
@@ -15,34 +18,43 @@ class MockEngine:
         while curr:
             ancestry.append(curr["sha"])
             parents = curr.get("parents", [])
-            if not parents: break
+            if not parents:
+                break
             curr = commit_map.get(parents[0])
         return ancestry
 
-    async def query_nodes(self, ancestry, node_type, filters=None):
-        ancestry_set = set(ancestry)
+    async def query_nodes(self, ancestry=None, node_type=None, filters=None, mask=None):
+        sha_to_bit = {"c1": 0, "c2": 1}
         results = []
         for n in self.nodes:
-            if n.get("introduced_in") in ancestry_set:
-                if n.get("deleted_in") is None or n.get("deleted_in") not in ancestry_set:
-                    match = True
-                    if filters:
-                        for k, v in filters.items():
-                            if n.get(k) != v: match = False; break
-                    if match: results.append(n)
+            intro_bit = 1 << sha_to_bit[n["introduced_in"]]
+            del_bit = 1 << sha_to_bit[n["deleted_in"]] if n.get("deleted_in") else 0
+            if (intro_bit & mask) != 0 and (del_bit & mask) == 0:
+                match = True
+                if filters:
+                    for k, v in filters.items():
+                        if n.get(k) != v:
+                            match = False
+                            break
+                if match:
+                    results.append(n)
         return results
 
-    async def query_edges(self, ancestry, edge_type, filters=None):
-        ancestry_set = set(ancestry)
+    async def query_edges(self, ancestry=None, edge_type=None, filters=None, mask=None):
+        sha_to_bit = {"c1": 0, "c2": 1}
         results = []
         for e in self.edges:
-            if e.get("introduced_in") in ancestry_set:
-                if e.get("deleted_in") is None or e.get("deleted_in") not in ancestry_set:
-                    match = True
-                    if filters:
-                        for k, v in filters.items():
-                            if e.get(k) != v: match = False; break
-                    if match: results.append(e)
+            intro_bit = 1 << sha_to_bit[e["introduced_in"]]
+            del_bit = 1 << sha_to_bit[e["deleted_in"]] if e.get("deleted_in") else 0
+            if (intro_bit & mask) != 0 and (del_bit & mask) == 0:
+                match = True
+                if filters:
+                    for k, v in filters.items():
+                        if e.get(k) != v:
+                            match = False
+                            break
+                if match:
+                    results.append(e)
         return results
 
 @pytest.mark.asyncio

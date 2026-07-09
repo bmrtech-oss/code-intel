@@ -81,6 +81,14 @@ class TypeScriptVisitor:
                 if self._node_kind(function_node) == "member_expression":
                     await self.storage.insert_fact("dynamic_call", f"{caller}->{callee}", "type", "cross-file-candidate", self.version)
 
+        elif kind == "import_statement":
+            source_node = node.child_by_field_name("source")
+            if source_node:
+                module_path = self._node_text(source_node).strip("'\"")
+                if not module_path.startswith("./") and not module_path.startswith("../"):
+                    caller = ".".join([self.module_name] + self.current_scope)
+                    await self.storage.insert_fact("cross_repo_import", f"{caller}->{module_path}", "module", module_path, self.version)
+
         for child in self._iter_children(node):
             await self._visit(child)
 

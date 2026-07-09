@@ -1,7 +1,5 @@
 import pytest
-import asyncio
 from src.core.workspace import WorkspaceManager
-import os
 
 # Skip tests if Redis is not available
 REDIS_AVAILABLE = False # Default to False, will try to check

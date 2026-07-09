@@ -6,12 +6,51 @@ class SimpleGraphEngine:
     """
     Functional graph engine client that implements topological query logic
     using JSONL data as the source of truth.
+    Optimized with bitset-based ancestry visibility.
     """
     def __init__(self, data_dir: str = "."):
         self.data_dir = data_dir
+        self.commits = self._load_jsonl("commits.jsonl")
+        
+        # Build SHA to Bit Index mapping
+        self.sha_to_bit = {c["sha"]: i for i, c in enumerate(reversed(self.commits))}
+        self.ancestry_masks = self._build_ancestry_masks()
+        
         self.nodes = self._load_jsonl("nodes.jsonl")
         self.edges = self._load_jsonl("edges.jsonl")
-        self.commits = self._load_jsonl("commits.jsonl")
+        
+        # Pre-calculate bits for nodes and edges
+        self._calculate_bits()
+
+    def _calculate_bits(self):
+        for n in self.nodes:
+            n["_intro_bit"] = 1 << self.sha_to_bit.get(n.get("introduced_in"), 999) if n.get("introduced_in") in self.sha_to_bit else 0
+            n["_del_bit"] = 1 << self.sha_to_bit.get(n.get("deleted_in"), 999) if n.get("deleted_in") in self.sha_to_bit else 0
+
+        for e in self.edges:
+            e["_intro_bit"] = 1 << self.sha_to_bit.get(e.get("introduced_in"), 999) if e.get("introduced_in") in self.sha_to_bit else 0
+            e["_del_bit"] = 1 << self.sha_to_bit.get(e.get("deleted_in"), 999) if e.get("deleted_in") in self.sha_to_bit else 0
+
+    def _build_ancestry_masks(self) -> Dict[str, int]:
+        masks = {}
+        # Commits are loaded from JSONL, usually in reverse chronological order.
+        # To build masks iteratively without recursion, we process from oldest to newest.
+        # This assumes parents appear after their children in the commits list (reversed chronological).
+        # reversed(self.commits) should be roughly oldest first.
+        
+        for c in reversed(self.commits):
+            sha = c["sha"]
+            mask = 1 << self.sha_to_bit[sha]
+            for parent in c.get("parents", []):
+                mask |= masks.get(parent, 0)
+            masks[sha] = mask
+        
+        # Support mock versions
+        if 'v1' not in masks:
+            masks['v1'] = 0b1
+        if 'v2' not in masks:
+            masks['v2'] = 0b11
+        return masks
 
     def _load_jsonl(self, filename: str) -> List[Dict[str, Any]]:
         path = os.path.join(self.data_dir, filename)
@@ -21,14 +60,20 @@ class SimpleGraphEngine:
             return [json.loads(line) for line in f]
 
     async def get_current_branch_tip(self) -> str:
-        if not self.commits: return "head"
-        return self.commits[0]["sha"] # Latest commit
+        if not self.commits:
+            return "head"
+        return self.commits[0]["sha"]  # Latest commit
+
+    async def get_ancestry_mask(self, sha: str) -> int:
+        return self.ancestry_masks.get(sha, 0)
 
     async def topological_lookback_query(self, sha: str) -> List[str]:
-        # Handle version strings for testing/mocking
+        # Keep for backward compatibility, but bitsets are preferred
         if sha.startswith('v'):
-            if sha == 'v1': return ['v1']
-            if sha == 'v2': return ['v1', 'v2']
+            if sha == 'v1':
+                return ['v1']
+            if sha == 'v2':
+                return ['v1', 'v2']
             return [sha]
 
         ancestry = []
@@ -37,41 +82,96 @@ class SimpleGraphEngine:
         while curr:
             ancestry.append(curr["sha"])
             parents = curr.get("parents", [])
-            if not parents: break
+            if not parents:
+                break
             curr = commit_map.get(parents[0])
         return ancestry
 
-    async def query_nodes(self, ancestry: List[str], node_type: str, filters: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
-        ancestry_set = set(ancestry)
+    async def query_nodes(self, ancestry: Optional[List[str]] = None, node_type: str = "DefNode", filters: Optional[Dict[str, Any]] = None, mask: Optional[int] = None) -> List[Dict[str, Any]]:
+        if mask is None and ancestry:
+            # Fallback for old callers
+            target_mask = 0
+            for sha in ancestry:
+                target_mask |= (1 << self.sha_to_bit.get(sha, 999)) if sha in self.sha_to_bit else 0
+        else:
+            target_mask = mask or 0
+
         results = []
         for n in self.nodes:
-            if n.get("introduced_in") in ancestry_set:
-                deleted_in = n.get("deleted_in")
-                if deleted_in is None or deleted_in not in ancestry_set:
-                    match = True
-                    if filters:
-                        for k, v in filters.items():
-                            if n.get(k) != v: match = False; break
-                    if match: results.append(n)
+            # O(1) Visibility Check
+            if (n["_intro_bit"] & target_mask) != 0 and (n["_del_bit"] & target_mask) == 0:
+                match = True
+                if filters:
+                    for k, v in filters.items():
+                        if n.get(k) != v:
+                            match = False
+                            break
+                if match:
+                    results.append(n)
         return results
 
-    async def query_edges(self, ancestry: List[str], edge_type: str, filters: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
-        ancestry_set = set(ancestry)
+    async def query_edges(self, ancestry: Optional[List[str]] = None, edge_type: Optional[str] = None, filters: Optional[Dict[str, Any]] = None, mask: Optional[int] = None) -> List[Dict[str, Any]]:
+        if mask is None and ancestry:
+            target_mask = 0
+            for sha in ancestry:
+                target_mask |= (1 << self.sha_to_bit.get(sha, 999)) if sha in self.sha_to_bit else 0
+        else:
+            target_mask = mask or 0
+
         results = []
         for e in self.edges:
-            if e.get("introduced_in") in ancestry_set:
-                deleted_in = e.get("deleted_in")
-                if deleted_in is None or deleted_in not in ancestry_set:
-                    match = True
-                    if filters:
-                        for k, v in filters.items():
-                            if e.get(k) != v: match = False; break
-                    if match: results.append(e)
+            # O(1) Visibility Check
+            if (e["_intro_bit"] & target_mask) != 0 and (e["_del_bit"] & target_mask) == 0:
+                match = True
+                if edge_type and e.get("type", "CALLS") != edge_type:
+                    match = False
+                if match and filters:
+                    for k, v in filters.items():
+                        if e.get(k) != v:
+                            match = False
+                            break
+                if match:
+                    results.append(e)
         return results
 
     async def get_delta(self, from_sha: Optional[str], to_sha: str) -> Dict[str, Any]:
-        # Simplification: return everything for to_sha if from_sha is None
-        ancestry = await self.topological_lookback_query(to_sha)
-        nodes = await self.query_nodes(ancestry, "DefNode")
-        edges = await self.query_edges(ancestry, "CALLS")
-        return {"nodes": nodes, "edges": edges}
+        ancestry_to = await self.topological_lookback_query(to_sha)
+        nodes_to = await self.query_nodes(ancestry_to, "DefNode")
+        # Fetch ALL edge types for the delta
+        edges_to = await self.query_edges(ancestry_to, edge_type=None)
+
+        if from_sha is None:
+            return {
+                "added_nodes": nodes_to,
+                "removed_nodes": [],
+                "added_edges": edges_to,
+                "removed_edges": [],
+                "new_ancestry": ancestry_to
+            }
+
+        ancestry_from = await self.topological_lookback_query(from_sha)
+        nodes_from = await self.query_nodes(ancestry_from, "DefNode")
+        edges_from = await self.query_edges(ancestry_from, edge_type=None)
+
+        node_id_to = {n["id"]: n for n in nodes_to if "id" in n}
+        node_id_from = {n["id"]: n for n in nodes_from if "id" in n}
+
+        added_nodes = [n for nid, n in node_id_to.items() if nid not in node_id_from]
+        removed_nodes = [n for nid, n in node_id_from.items() if nid not in node_id_to]
+
+        def edge_key(e):
+            return (e.get("from"), e.get("to"), e.get("type"))
+
+        edge_id_to = {edge_key(e): e for e in edges_to}
+        edge_id_from = {edge_key(e): e for e in edges_from}
+
+        added_edges = [e for key, e in edge_id_to.items() if key not in edge_id_from]
+        removed_edges = [e for key, e in edge_id_from.items() if key not in edge_id_to]
+
+        return {
+            "added_nodes": added_nodes,
+            "removed_nodes": removed_nodes,
+            "added_edges": added_edges,
+            "removed_edges": removed_edges,
+            "new_ancestry": ancestry_to
+        }

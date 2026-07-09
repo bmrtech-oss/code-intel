@@ -44,7 +44,7 @@ class FileBasedHandler(ModelHandler):
             if match:
                 try:
                     return json.loads(match.group())
-                except:
+                except json.JSONDecodeError:
                     pass
         return {"raw": raw_response, "error": "Could not parse JSON"}
     

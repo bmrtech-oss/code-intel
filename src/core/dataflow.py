@@ -1,4 +1,3 @@
-from sqlalchemy import text
 from .storage import VersionedStorage
 
 class DataflowEngine:
@@ -34,7 +33,7 @@ class DataflowEngine:
         return await self.storage.execute_query(query, params)
 
     async def impact_analysis(self, symbol: str, version: str, depth: int = 3):
-        query = f"""
+        query = """
         WITH RECURSIVE callers(callee, caller, depth) AS (
             SELECT callee, caller, 1 FROM current_calls WHERE version = :v AND callee = :sym
             UNION ALL

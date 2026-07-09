@@ -4,6 +4,7 @@ from ..lang.python_handler import PythonVisitor
 from ..lang.java_handler import JavaVisitor
 from ..lang.cobol_handler import CobolVisitor      # now available via pack
 from ..lang.delphi_handler import DelphiVisitor
+from ..lang.cs_handler import CSharpVisitor
 
 class IngestionPipeline:
     def __init__(self, storage: VersionedStorage):
@@ -25,6 +26,8 @@ class IngestionPipeline:
             visitor = CobolVisitor(self.storage, file_path, version)
         elif ext in (".pas", ".dpr", ".dpk"):
             visitor = DelphiVisitor(self.storage, file_path, version)
+        elif ext == ".cs":
+            visitor = CSharpVisitor(self.storage, file_path, version)
         else:
             return  # skip unsupported files
         await visitor.parse()

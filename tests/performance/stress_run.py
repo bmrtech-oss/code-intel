@@ -1,7 +1,5 @@
 import asyncio
 import time
-import os
-import shutil
 import logging
 from git import Repo
 from src.core.git_handler import GitRepoHandler
@@ -29,9 +27,12 @@ async def run_stress_test(repo_url: str, num_queries: int = 100):
         engine = SimpleGraphEngine() # Uses nodes.jsonl edges.jsonl
         # If they don't exist, we'll just mock them for the test
         if not engine.nodes:
+            engine.commits = [{"sha": c.hexsha, "parents": [p.hexsha for p in c.parents]} for c in commits]
+            engine.sha_to_bit = {c["sha"]: i for i, c in enumerate(reversed(engine.commits))}
+            engine.ancestry_masks = engine._build_ancestry_masks()
             engine.nodes = [{"id": f"n{i}", "introduced_in": commits[-1].hexsha} for i in range(1000)]
             engine.edges = [{"from": f"n{i}", "to": f"n{i+1}", "introduced_in": commits[-1].hexsha} for i in range(999)]
-            engine.commits = [{"sha": c.hexsha, "parents": [p.hexsha for p in c.parents]} for c in commits]
+            engine._calculate_bits()
 
         cache = MemoryCache()
         adapter = BiTemporalAdapter(engine, cache)

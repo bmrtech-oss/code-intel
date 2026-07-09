@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 from src.lang.python_handler import PythonVisitor
 from src.lang.ts_handler import TypeScriptVisitor
 from src.lang.go_handler import GoVisitor
