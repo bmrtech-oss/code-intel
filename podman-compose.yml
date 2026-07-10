@@ -90,6 +90,23 @@ services:
     command: ["uv", "run", "rq", "worker", "ingestion"]
     restart: unless-stopped
 
+  mcp-server:
+    profiles: ["mcp"]
+    build: .
+    image: codeintel-mcp:latest
+    container_name: codeintel-mcp
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://postgres:password@postgres:5432/codeintel
+      - REDIS_HOST=redis
+      - USE_BITEMPORAL=true
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: ["code-intel-mcp"]
+    restart: unless-stopped
+
 volumes:
   postgres_data:
   redis_data:

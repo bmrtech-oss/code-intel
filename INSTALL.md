@@ -167,7 +167,7 @@ The endpoint returns structured requirements and stores traceability links for t
 If you want to use Code-Intel from an MCP-compatible client:
 
 ```bash
-uv run python -m src.mcp_server
+uv run python -m src.cli.main mcp
 ```
 
 ## 9. Start the web UI (optional)

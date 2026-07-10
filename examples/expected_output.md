@@ -73,8 +73,37 @@ This document describes the facts and requirements that Code-Intel is expected t
 
 ## 5. Sample LLM Artifact (Provenance)
 
-### Requirement Artifact
+### Requirement Artifact (Asynchronous Result)
+Every requirement generation job now returns a structured JSON result via Ollama's constrained decoding.
+
+**Example Job Result:**
+```json
+{
+  "status": "completed",
+  "result": {
+    "requirements": {
+      "epic": "Modernize Core Engine",
+      "feature": "Async Task Offloading",
+      "user_story": "As a system, I want to offload LLM calls to workers so that the UI remains responsive.",
+      "acceptance_criteria": ["Return 202 immediately", "Preserve grounded_in fact IDs"],
+      "tasks": [
+        {
+          "text": "Implement RQ integration",
+          "traceability": ["src.worker.tasks.generate_requirements_task"]
+        }
+      ]
+    },
+    "provenance": {
+      "grounded_in": [42, 43, 44],
+      "is_verified": true,
+      "confidence": 1.0
+    }
+  }
+}
+```
+
+### LLM Artifact Storage Metadata
 | ID | Type | Grounded In (Fact IDs) | Is Verified | Confidence |
 |----|------|------------------------|-------------|------------|
-| 101 | requirement | [1, 5, 12, 18] | True | 1.0 |
+| 101 | requirement | [42, 43, 44] | True | 1.0 |
 | 102 | summary | [3, 7] | False | 0.5 |
