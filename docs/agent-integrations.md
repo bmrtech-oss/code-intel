@@ -37,7 +37,7 @@ This adds a `.cursorrules` file to your project that instructs the AI on how to 
 We provide pre-built, grouped tools for LangChain to keep the agent's context window clean.
 
 ```python
-from code_intel.agent_tools import get_langchain_tools
+from src.agent_tools import get_langchain_tools
 
 # Get 4 high-level grouped tools
 tools = get_langchain_tools(base_url="http://localhost:8000")
@@ -54,7 +54,7 @@ agent = create_react_agent(llm, tools)
 Native method bindings for Google's Generative AI SDK:
 
 ```python
-from code_intel.agent_tools import get_google_adk_tools
+from src.agent_tools import get_google_adk_tools
 import google.generativeai as genai
 
 tools = get_google_adk_tools()
