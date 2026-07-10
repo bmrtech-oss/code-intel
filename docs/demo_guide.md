@@ -136,7 +136,7 @@ Connect Claude Code or other AI assistants directly to your codebase intelligenc
 
 ```bash
 # Start the MCP server
-uv run python -m src.mcp_server
+uv run python -m src.cli.main mcp
 ```
 
 Claude can now call tools like `predict_impact`, `query_dead_code`, and `semantic_search` to assist you in real-time during your development sessions.

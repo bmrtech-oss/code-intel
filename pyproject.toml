@@ -36,6 +36,16 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src"]
 
+[project.scripts]
+code-intel = "src.cli.main:app"
+code-intel-mcp = "src.mcp.server:run_mcp"
+
+[project.optional-dependencies]
+agents = [
+    "langchain-core>=0.3.0",
+    "google-generativeai>=0.8.0",
+]
+
 [dependency-groups]
 dev = [
     "pytest>=8.0.0",
@@ -43,6 +53,7 @@ dev = [
     "pytest-cov>=5.0.0",
     "httpx>=0.27.0",
     "ruff>=0.15.20",
+    "json-repair>=0.61.2",
 ]
 
 [tool.pytest.ini_options]

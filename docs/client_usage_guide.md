@@ -13,7 +13,7 @@ Expose the server using a `.mcp.json` or by adding it to your Claude Desktop con
   "mcpServers": {
     "code-intel": {
       "command": "uv",
-      "args": ["run", "python", "-m", "src.mcp_server"],
+      "args": ["run", "python", "-m", "src.cli.main mcp"],
       "env": {
         "DATABASE_URL": "postgresql+asyncpg://...",
         "USE_BITEMPORAL": "true"
@@ -73,6 +73,40 @@ curl -X POST http://localhost:8000/query \
     "rule": "predict_impact",
     "symbol": "payment.process_refund"
   }'
+```
+
+### Requirements Generation (Async)
+Generation of business requirements from code can be time-consuming. This endpoint returns a `job_id` immediately, which you can use to poll for the status.
+
+**Initiate Generation:**
+```bash
+curl -X POST http://localhost:8000/requirements
+```
+Response: `{"job_id": "...", "status": "pending"}`
+
+**Poll for Status:**
+```bash
+curl http://localhost:8000/requirements/status/<job_id>
+```
+Response (when finished):
+```json
+{
+  "status": "completed",
+  "result": {
+    "requirements": {
+      "epic": "...",
+      "feature": "...",
+      "user_story": "...",
+      "acceptance_criteria": [...],
+      "tasks": [...]
+    },
+    "provenance": {
+      "grounded_in": [...],
+      "is_verified": true,
+      "confidence": 1.0
+    }
+  }
+}
 ```
 
 ### Fact Confidence Levels

@@ -4,11 +4,23 @@ import re
 from abc import ABC, abstractmethod
 from ollama import AsyncClient
 from typing import List, Dict, Any
+from pydantic import BaseModel
 
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://ollama:11434")
 MODEL = os.getenv("LLM_MODEL", "phi3:mini")
 TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.7"))
 PROMPTS_DIR = os.getenv("PROMPTS_DIR", "prompts")
+
+class Task(BaseModel):
+    text: str
+    traceability: List[str]
+
+class RequirementResponse(BaseModel):
+    epic: str
+    feature: str
+    user_story: str
+    acceptance_criteria: List[str]
+    tasks: List[Task]
 
 class ModelHandler(ABC):
     @abstractmethod
@@ -30,23 +42,30 @@ class FileBasedHandler(ModelHandler):
         return self.template.replace('{{symbols}}', symbols_str).replace('{{calls}}', calls_str)
 
     def parse_response(self, raw_response: str) -> Dict[str, Any]:
-        # Remove any leading/trailing whitespace
+        # With constrained decoding, we expect direct JSON.
         cleaned = raw_response.strip()
-        # If the response starts with "```json" or "```", strip that
-        if cleaned.startswith("```"):
-            cleaned = re.sub(r'^```(?:json)?\s*|\s*```$', '', cleaned, flags=re.MULTILINE)
-        # Try to parse as JSON
         try:
             return json.loads(cleaned)
         except json.JSONDecodeError:
-            # If that fails, try to extract a JSON object from the text
+            # Ultra-rare fallback if Ollama returns extra text despite format: json
             match = re.search(r'\{.*\}', cleaned, re.DOTALL)
             if match:
                 try:
                     return json.loads(match.group())
                 except json.JSONDecodeError:
                     pass
-        return {"raw": raw_response, "error": "Could not parse JSON"}
+            
+            # If it's still failing, it might be a partial JSON from a stream or a broken response
+            import logging
+            logging.warning(f"Ollama grammar enforcement may have failed. Trying json_repair. Raw: {raw_response[:100]}...")
+            try:
+                from json_repair import repair_json
+                repaired = repair_json(cleaned)
+                return json.loads(repaired)
+            except Exception as e:
+                logging.error(f"json_repair also failed: {e}")
+            
+            return {"raw": raw_response, "error": "Could not parse JSON"}
     
     # def parse_response(self, raw_response: str) -> Dict[str, Any]:
     #     # Generic JSON extraction (same as before)
@@ -89,9 +108,19 @@ class LLMUDF:
         response = await self.client.generate(
             model=MODEL,
             prompt=prompt,
+            format=RequirementResponse.model_json_schema(),
             options={"temperature": TEMPERATURE}
         )
         parsed = self.handler.parse_response(response.response)
+        
+        # Explicit validation
+        if "error" not in parsed:
+            try:
+                RequirementResponse.model_validate(parsed)
+            except Exception as e:
+                import logging
+                logging.error(f"Pydantic validation failed for Ollama response: {e}")
+                parsed["error"] = f"Validation failed: {str(e)}"
         print(f"DEBUG: Raw response: {response.response}")
         
         # Grounding fact IDs
@@ -134,6 +163,7 @@ class LLMUDF:
         async for chunk in await self.client.generate(
             model=MODEL,
             prompt=prompt,
+            format=RequirementResponse.model_json_schema(),
             options={"temperature": TEMPERATURE},
             stream=True
         ):

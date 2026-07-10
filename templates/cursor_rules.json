@@ -1,0 +1,10 @@
+{
+  "version": "1.0",
+  "name": "Code-Intel",
+  "instructions": "Always leverage the Code-Intel MCP server for code analysis. Prioritize structural facts over local grep search when possible.",
+  "rules": [
+    "Before refactoring, run 'query_call_graph' to understand dependencies.",
+    "Verify all deletions with 'query_dead_code'.",
+    "Use 'predict_impact' for any change to core utility functions."
+  ]
+}

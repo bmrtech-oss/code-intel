@@ -10,8 +10,8 @@
         "mcp"
       ],
       "env": {
-        "DATABASE_URL": "${DATABASE_URL:-postgresql+asyncpg://postgres:password@localhost:5432/codeintel}",
-        "REDIS_HOST": "${REDIS_HOST:-localhost}"
+        "DATABASE_URL": "postgresql+asyncpg://postgres:password@localhost:5432/codeintel",
+        "USE_BITEMPORAL": "true"
       }
     }
   }

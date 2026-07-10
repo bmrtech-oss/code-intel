@@ -262,7 +262,7 @@ curl -X GET "http://localhost:8000/analytics/predict-impact?symbol=src.core.git_
 Connect Claude Code or other AI assistants directly to your codebase intelligence:
 
 ```bash
-uv run python -m src.mcp_server
+uv run python -m src.cli.main mcp
 ```
 
 Claude can now call tools like `predict_impact`, `query_dead_code`, and `semantic_search` to assist you in real-time during your development sessions.

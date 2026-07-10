@@ -4,7 +4,7 @@ This document captures the current Phase 0.5 foundation work for the local MCP s
 
 ## What is included
 
-- A Git-aware MCP server entrypoint in [src/mcp_server.py](../src/mcp_server.py)
+- A Git-aware MCP server entrypoint in [src.cli.main mcp.py](../src.cli.main mcp.py)
 - A `get_workspace_info` tool that reads the active workspace session and Git state
 - A three-panel UI shell in [ui/src/App.tsx](../ui/src/App.tsx) with **Cytoscape.js** graph visualization.
 - **Timeline Travel**: A history rail for instant navigation between commit SHAs.
@@ -14,7 +14,7 @@ This document captures the current Phase 0.5 foundation work for the local MCP s
 ## Run the MCP server
 
 ```bash
-uv run python -m src.mcp_server
+uv run python -m src.cli.main mcp
 ```
 
 The server exposes tools such as `query_call_graph`, `query_dead_code`, `query_impact`, `semantic_search`, and `get_workspace_info`.

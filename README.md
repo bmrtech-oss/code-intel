@@ -56,7 +56,8 @@ graph TB
 - **MCP-Native**: First-class Model Context Protocol (MCP) server for seamless integration with AI assistants like Claude Code.
 - **Multi-Repo Dependency Detection**: Cross-repo import tracking for Python, TypeScript, and Go, unified as `IMPORTS_FROM` edges.
 - **Declarative Analysis**: New analyses (e.g., dead code, impact) are simple SQL views, not complex code.
-- **LLM as a UDF**: Requirements generation is a first-class query inside the database flow.
+- **Async LLM Workers**: Requirement generation is offloaded to a background task queue (RQ) to prevent UI blocking, with results retrieved via polling.
+- **JSON Schema Enforcement**: Uses Ollama's native grammar-constrained decoding to ensure 100% valid Pydantic models from the LLM.
 
 ## 🔄 System Flow
 
@@ -124,9 +125,10 @@ The requirements flow is an end-to-end pipeline that starts with AST extraction 
 
 1. The ingestion pipeline selects a language-specific visitor from the file extension and parses each source file into structured symbols and call edges.
 2. Those facts are written into the versioned storage layer as symbol and call records, so each result is tied to a specific repository version.
-3. The `/requirements` endpoint loads the current version’s facts and passes them to `LLMUDF`, which serializes them into a prompt using the model-specific template from the prompts directory.
-4. Ollama returns a JSON document describing epics, features, and stories; the server cleans and parses that response, stores traceability links in `requirement_traceability`, and returns the structured requirements to the client.
-5. The same pipeline is available through the MCP server, which exposes the same requirements workflow to AI assistants.
+3. The `/requirements` endpoint initiates an asynchronous background job and returns a `job_id`.
+4. The background worker loads the current version’s facts and passes them to `LLMUDF`, which uses **Ollama's JSON Schema enforcement** to ensure the model output is strictly valid.
+5. The LLM generates a structured JSON document (Epics, Features, Stories). The worker validates this against a Pydantic model, stores traceability links in `requirement_traceability`, and saves the final result.
+6. The client polls the `/requirements/status/{job_id}` endpoint until completion to retrieve the final structured requirements and provenance metadata.
 
 ## Documentation Index
 
@@ -136,6 +138,7 @@ The repository documentation set lives under [docs](docs):
 - [docs/demo_guide.md](docs/demo_guide.md) — step-by-step feature demo from ingestion through requirements generation.
 - [docs/code-intel-design.md](docs/code-intel-design.md) — high-level system design and architecture notes.
 - [docs/code-intel-nxt.md](docs/code-intel-nxt.md) — next-step roadmap and product direction.
+- [docs/agent-integrations.md](docs/agent-integrations.md) — guide for connecting Code-Intel to Claude, Cursor, and Python agents.
 - [docs/conde-intel-nxt-prompts.md](docs/conde-intel-nxt-prompts.md) — prompt and workflow notes for the next-generation experience.
 - [docs/how-code-intel-is-different.md](docs/how-code-intel-is-different.md) — explanation of the platform’s differentiators.
 - [docs/mcp-ui-foundations.md](docs/mcp-ui-foundations.md) — current MCP server and UI foundation status.

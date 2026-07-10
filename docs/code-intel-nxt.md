@@ -122,7 +122,7 @@ This section provides **phase‑by‑phase tasks and AI‑ready prompts**. Each 
 > **Context:** We need a session layer that maps user environment lookups to specific points in a project's repository history.
 > **Task:**
 > 1. Write `src/core/workspace.py`. Implement a Redis-backed session manager that stores and maintains active workspace sessions. Store `current_branch`, `current_sha`, and the **branch tip SHA**. For ancestry lookups, do **not** pre‑cache the entire ancestor list. Instead, implement a paginated ancestry query that walks the commit DAG on demand, with an in‑memory LRU for the most recent 100 commits. Use Redis to cache the ancestor list per commit with a TTL of 1 hour.
-> 2. Build an asynchronous MCP (Model Context Protocol) server in `src/mcp_server.py` using the python `mcp` SDK. Expose 5 core tools: `query_call_graph`, `query_dead_code`, `generate_requirements`, `query_impact`, and `semantic_search`. **Crucial design constraint:** Every tool definition must accept an optional `commit_sha: str` input parameter. If this parameter is omitted by the AI client, default automatically to the active workspace SHA retrieved from Redis.
+> 2. Build an asynchronous MCP (Model Context Protocol) server in `src.mcp.server.py` using the python `mcp` SDK. Expose 5 core tools: `query_call_graph`, `query_dead_code`, `generate_requirements`, `query_impact`, and `semantic_search`. **Crucial design constraint:** Every tool definition must accept an optional `commit_sha: str` input parameter. If this parameter is omitted by the AI client, default automatically to the active workspace SHA retrieved from Redis.
 
 #### Task 0.5 & 0.6: Engine Evaluation Script
 
@@ -141,7 +141,7 @@ This section provides **phase‑by‑phase tasks and AI‑ready prompts**. Each 
 **Prompt:**
 > **Context:** Our core MCP tools need full analytical logic, and we need a lightweight visual interface to switch between repository states.
 > **Task:**
-> 1. Complete the tool execution layers in `src/mcp_server.py` to connect seamlessly with the workspace storage layer. Add `get_workspace_info` to read current Git states.
+> 1. Complete the tool execution layers in `src.mcp.server.py` to connect seamlessly with the workspace storage layer. Add `get_workspace_info` to read current Git states.
 > 2. Initialize a clean frontend application in `ui/`. Build a responsive three-panel interface layout (Left: File tree & Git history branch selector, Center: Interactive graph rendering view, Right: Interactive MCP Chat panel). Use Zustand for state management and cache the last 5 viewed commits to avoid redundant fetches.
 > 3. Create a `.mcp.json` configuration manifest that exposes this local server directly to tooling like Claude Code, allowing it to invoke our workspace analysis tools.
 

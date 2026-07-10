@@ -15,7 +15,7 @@ from ..core.dataflow import DataflowEngine
 from ..core.rules import RuleEngine
 from ..core.udf import LLMUDF
 from ..core.git_handler import GitRepoHandler
-from ..worker.tasks import queue, run_ingestion
+from ..worker.tasks import queue, llm_queue, run_ingestion, generate_requirements_task
 
 app = FastAPI(title="Code Intelligence Platform (Prod)", version="1.0.0")
 
@@ -31,35 +31,26 @@ def is_git_url(path: str) -> bool:
     return bool(re.match(r'^(https?://|git@)', path))
 
 def extract_json(text: str):
-    # Try to parse as is
+    # With Ollama grammar, we expect valid JSON directly.
     try:
         return json.loads(text)
     except (json.JSONDecodeError, ValueError):
-        pass
-    # Remove markdown fences
-    cleaned = re.sub(r'^```json\s*|\s*```$', '', text.strip(), flags=re.MULTILINE)
-    try:
-        return json.loads(cleaned)
-    except (json.JSONDecodeError, ValueError):
-        pass
-    # Find the outermost JSON object/array
-    brace_count = 0
-    start = None
-    for i, ch in enumerate(text):
-        if ch == '{':
-            if brace_count == 0:
-                start = i
-            brace_count += 1
-        elif ch == '}':
-            brace_count -= 1
-            if brace_count == 0 and start is not None:
-                candidate = text[start:i+1]
-                try:
-                    return json.loads(candidate)
-                except (json.JSONDecodeError, ValueError):
-                    continue
-    # Fallback: return raw text
-    return {"raw": text, "error": "Could not parse JSON", "truncated": True}
+        # Fallback to finding the first JSON object
+        match = re.search(r'\{.*\}', text, re.DOTALL)
+        if match:
+            try:
+                return json.loads(match.group())
+            except:
+                pass
+        
+        # Try json_repair as a last resort
+        try:
+            from json_repair import repair_json
+            return json.loads(repair_json(text))
+        except:
+            pass
+    
+    return {"raw": text, "error": "Could not parse JSON"}
 
 @app.on_event("startup")
 async def init_db():
@@ -151,7 +142,7 @@ async def query(req: QueryRequest, db: AsyncSession = Depends(get_db)):
 
     # Use BiTemporalAdapter if enabled
     if USE_BITEMPORAL:
-        from ..mcp_server import adapter as mcp_adapter, init_topological_stack
+        from ..mcp.server import adapter as mcp_adapter, init_topological_stack
         await init_topological_stack()
         adapter = mcp_adapter
 
@@ -208,33 +199,14 @@ async def requirements_stream(version: Optional[str] = None, db: AsyncSession = 
             # yield f"data: {json.dumps({'token': token})}\n\n"
             yield f"data: {json.dumps({'token': token, 'partial': full_response})}\n\n"
 
-        # ---- NEW: extract only the first complete JSON object ----
-        def extract_first_json(text: str) -> str:
-            brace_count = 0
-            start = None
-            for i, ch in enumerate(text):
-                if ch == '{':
-                    if brace_count == 0:
-                        start = i
-                    brace_count += 1
-                elif ch == '}':
-                    brace_count -= 1
-                    if brace_count == 0 and start is not None:
-                        return text[start:i+1]
-            return None
-
-        json_part = extract_first_json(full_response)
-        if json_part:
-            cleaned = json_part
-        else:
-            cleaned = full_response
-
         # Parse and store traceability
         try:
-            req_json = json.loads(cleaned)
+            req_json = json.loads(full_response)
+            cleaned = full_response
         except json.JSONDecodeError:
             # fallback: use extract_json
-            req_json = extract_json(cleaned)
+            req_json = extract_json(full_response)
+            cleaned = json.dumps(req_json)
             if "error" in req_json:
                 req_json = {"raw": full_response, "error": "JSON parse failed"}
 
@@ -277,61 +249,28 @@ async def requirements_stream(version: Optional[str] = None, db: AsyncSession = 
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
-@app.post("/requirements")
+@app.post("/requirements", status_code=202)
 async def requirements(version: Optional[str] = None, db: AsyncSession = Depends(get_db)):
     storage = VersionedStorage(db)
     version = version or await storage.get_current_version()
     if not version:
         raise HTTPException(status_code=400, detail="No version found")
     
-    # Fetch fact IDs and metadata for grounding
-    symbols = await storage.execute_query("""
-        SELECT f.id, s.symbol_id, s.version, s.name, s.kind, s.file, s.line
-        FROM current_symbols s
-        JOIN facts f ON s.symbol_id = f.entity_id AND s.version = f.version AND f.attribute = 'kind'
-        WHERE s.version = :v AND f.valid_to IS NULL
-    """, {"v": version})
-    calls = await storage.execute_query("""
-        SELECT f.id, c.call_id, c.version, c.caller, c.callee, c.confidence
-        FROM current_calls c
-        JOIN facts f ON c.call_id = f.entity_id AND c.version = f.version AND f.attribute = 'callee'
-        WHERE c.version = :v AND f.valid_to IS NULL
-    """, {"v": version})
+    job = llm_queue.enqueue(generate_requirements_task, version)
+    return {"job_id": job.id, "status": "pending"}
+
+@app.get("/requirements/status/{job_id}")
+async def requirements_status(job_id: str):
+    job = llm_queue.fetch_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
     
-    udf = LLMUDF()
-    response = await udf.generate_requirements(symbols, calls)
-    req_json = response["result"]
-    provenance = response["provenance"]
-
-    # Store LLM Artifact
-    await storage.insert_llm_artifact(
-        artifact_type="requirement",
-        value=json.dumps(req_json),
-        version=version,
-        grounded_in=provenance["grounded_in"],
-        prompt=provenance["prompt"],
-        model=provenance["model"],
-        is_verified=provenance["is_verified"],
-        confidence=provenance["confidence"]
-    )
-
-    if "tasks" in req_json and isinstance(req_json["tasks"], list):
-        for task in req_json["tasks"]:
-            if "traceability" in task and isinstance(task["traceability"], list):
-                for symbol_id in task["traceability"]:
-                    epic = req_json.get("epic", "UNKNOWN")
-                    req_id = f"{epic[:20]}_{task.get('text', 'TASK')[:20]}".replace(" ", "_")
-                    await db.execute(
-                        text("""
-                            INSERT INTO requirement_traceability (requirement_id, symbol_id, confidence)
-                            VALUES (:rid, :sid, 1.0)
-                            ON CONFLICT (requirement_id, symbol_id) DO NOTHING
-                        """),
-                        {"rid": req_id, "sid": symbol_id}
-                    )
-        await db.commit()
-
-    return {"requirements": req_json}
+    if job.is_finished:
+        return {"status": "completed", "result": job.result}
+    elif job.is_failed:
+        return {"status": "failed", "error": str(job.exc_info)}
+    else:
+        return {"status": job.get_status()}
 
 @app.get("/trace/{requirement_id}")
 async def get_traceability(requirement_id: str, db: AsyncSession = Depends(get_db)):
@@ -349,7 +288,7 @@ async def get_traceability(requirement_id: str, db: AsyncSession = Depends(get_d
 
 @app.get("/search")
 async def search(q: str, limit: int = 5):
-    from .. import mcp_server
+    from ..mcp import server as mcp_server
     await mcp_server.init_topological_stack()
     if mcp_server.semantic_search_engine:
         results = await mcp_server.semantic_search_engine.search(q, limit)
@@ -359,12 +298,12 @@ async def search(q: str, limit: int = 5):
 
 @app.get("/analytics/predict-impact")
 async def predict_impact(symbol: str, commit_sha: Optional[str] = None):
-    from .. import mcp_server
+    from ..mcp import server as mcp_server
     await mcp_server.init_topological_stack()
     version = commit_sha
     if not version:
         # Get active SHA
-        from ..mcp_server import workspace_manager
+        from ..mcp.server import workspace_manager
         version = await workspace_manager.get_active_sha()
     
     if not version:
