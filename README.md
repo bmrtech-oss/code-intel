@@ -81,11 +81,24 @@ sequenceDiagram
 
 ## 🛠️ Setup
 
+### One-Click Installation (Recommended)
 ```bash
-# Clone or create project
-./create-project-uv-prod.sh
+./install.sh
+```
+This script handles dependency syncing, starts the infrastructure, runs migrations, pulls the required LLM models, and configures AI agent integrations for Claude and Cursor.
 
-# Start all services (Linux/macOS). On Windows use a compatible container runtime.
+### One-Click Strategic Demo
+```bash
+./demo.sh
+```
+Experience the full power of Code-Intel (Intelligence, Prediction, Verification, and Autonomic Action) using the built-in Python example.
+
+### Manual Setup
+```bash
+# 1. Install dependencies
+uv sync
+
+# 2. Start services
 podman-compose up -d
 
 # Run database migrations
@@ -139,7 +152,7 @@ The repository documentation set lives under [docs](docs):
 - [docs/code-intel-design.md](docs/code-intel-design.md) — high-level system design and architecture notes.
 - [docs/code-intel-nxt.md](docs/code-intel-nxt.md) — next-step roadmap and product direction.
 - [docs/agent-integrations.md](docs/agent-integrations.md) — guide for connecting Code-Intel to Claude, Cursor, and Python agents.
-- [docs/conde-intel-nxt-prompts.md](docs/conde-intel-nxt-prompts.md) — prompt and workflow notes for the next-generation experience.
+- [docs/code-intel-nxt-prompts.md](docs/code-intel-nxt-prompts.md) — prompt and workflow notes for the next-generation experience.
 - [docs/how-code-intel-is-different.md](docs/how-code-intel-is-different.md) — explanation of the platform’s differentiators.
 - [docs/mcp-ui-foundations.md](docs/mcp-ui-foundations.md) — current MCP server and UI foundation status.
 - [docs/use_cases_guide.md](docs/use_cases_guide.md) — practical use cases for modernization, impact analysis, history exploration, and AI-assisted development.
