@@ -13,7 +13,7 @@ Expose the server using a `.mcp.json` or by adding it to your Claude Desktop con
   "mcpServers": {
     "code-intel": {
       "command": "uv",
-      "args": ["run", "python", "-m", "src.cli.main mcp"],
+      "args": ["run", "python", "-m", "src.cli.main", "mcp"],
       "env": {
         "DATABASE_URL": "postgresql+asyncpg://...",
         "USE_BITEMPORAL": "true"
@@ -32,6 +32,7 @@ Expose the server using a `.mcp.json` or by adding it to your Claude Desktop con
 | `query_dead_code` | Find functions that are never called in the current topological state. |
 | `query_impact` | Perform blast-radius analysis for a symbol. |
 | `predict_impact` | Predict potential impact based on historical modification patterns with confidence weighting. |
+| `verify_impact` | Calculate blast radius, identify relevant tests, and execute them autonomously. |
 | `semantic_search` | Search the codebase using natural language. |
 | `generate_requirements` | Generate Epics and User Stories with traceability back to code symbols. |
 
@@ -64,13 +65,25 @@ curl -X POST http://localhost:8000/query \
   }'
 ```
 
-### Impact Prediction
-Use historical data to predict the effect of a proposed change. Results include a confidence score for each caller:
+### Impact Prediction & Verification
+Predict the effect of a proposed change and autonomously execute relevant tests to verify safety.
+
+**Predict Impact:**
 ```bash
 curl -X POST http://localhost:8000/query \
   -H "Content-Type: application/json" \
   -d '{
     "rule": "predict_impact",
+    "symbol": "payment.process_refund"
+  }'
+```
+
+**Verify Impact (Runs Tests):**
+```bash
+curl -X POST http://localhost:8000/query \
+  -H "Content-Type: application/json" \
+  -d '{
+    "rule": "verify_impact",
     "symbol": "payment.process_refund"
   }'
 ```

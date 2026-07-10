@@ -197,6 +197,20 @@ class VersionedStorage:
         await self.insert_fact("call", entity_id, "callee", callee, version)
         await self.insert_fact("call", entity_id, "confidence", str(confidence), version)
 
+    async def resolve_symbol_id(self, fqn: str) -> Optional[int]:
+        """
+        Global Deduplication: Find the original Fact ID for a symbol FQN.
+        Checks across all versions to find the most recent introduction.
+        """
+        query = """
+            SELECT id FROM facts 
+            WHERE entity_type = 'symbol' AND attribute = 'name' AND value = :fqn
+            AND valid_to IS NULL
+            ORDER BY id DESC LIMIT 1
+        """
+        result = await self.session.execute(text(query), {"fqn": fqn})
+        return result.scalar()
+
     async def insert_cross_repo_import(self, caller: str, module: str, version: str, target_repo: str = "unknown", target_sha: str = "unknown"):
         entity_id = f"cross_repo_import:{caller}->{module}"
         await self.insert_fact("cross_repo_import", entity_id, "caller", caller, version)
@@ -204,6 +218,11 @@ class VersionedStorage:
         await self.insert_fact("cross_repo_import", entity_id, "target_repo", target_repo, version)
         await self.insert_fact("cross_repo_import", entity_id, "target_sha", target_sha, version)
         await self.insert_fact("cross_repo_import", entity_id, "resolved_at", datetime.utcnow().isoformat(), version)
+        
+        # Deduplication Pass
+        source_id = await self.resolve_symbol_id(module)
+        if source_id:
+            await self.insert_fact("cross_repo_import", entity_id, "source_fact_id", str(source_id), version)
 
     async def get_schema_version(self) -> Optional[str]:
         result = await self.session.execute(text("SELECT value FROM version_metadata WHERE key = 'schema_version'"))

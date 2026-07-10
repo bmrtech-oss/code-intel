@@ -107,3 +107,34 @@ Every requirement generation job now returns a structured JSON result via Ollama
 |----|------|------------------------|-------------|------------|
 | 101 | requirement | [42, 43, 44] | True | 1.0 |
 | 102 | summary | [3, 7] | False | 0.5 |
+
+---
+
+## 6. Targeted Test Verification (Impact Analysis)
+
+### verify_impact Result
+The `verify_impact` tool identifies affected code and executes relevant tests autonomously.
+
+**Example Result:**
+```json
+{
+  "status": "success",
+  "test_results": [
+    {
+      "file": "tests/test_processor.py",
+      "passed": true,
+      "stdout": "...",
+      "stderr": ""
+    }
+  ],
+  "impact": {
+    "symbol": "app.Processor.process",
+    "structural_callers": {
+      "app.main": 1.0
+    },
+    "historical_coupling": [],
+    "predicted_blast_radius": ["app.main"],
+    "affected_tests": ["tests/test_processor.py"]
+  }
+}
+```

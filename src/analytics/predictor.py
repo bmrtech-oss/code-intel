@@ -26,7 +26,8 @@ class ImpactPredictor:
         # 2. Get historical co-modifications
         # Fetch all symbols visible at this commit
         all_symbols = await self.adapter.get_symbols(commit_sha)
-        target_node = next((s for s in all_symbols if s["fqn"] == symbol_fqn), None)
+        symbol_map = {s["fqn"]: s for s in all_symbols}
+        target_node = symbol_map.get(symbol_fqn)
         
         historical_impact = set()
         if target_node:
@@ -48,9 +49,25 @@ class ImpactPredictor:
                     # Strength of coupling could be weight based on len(co_mods)
                     historical_impact.add(node["fqn"])
 
+        # 3. Combine and map to tests
+        blast_radius = structural_impact.union(historical_impact)
+        
+        from .test_mapper import TestMapper
+        mapper = TestMapper(self.adapter)
+        
+        affected_tests = set()
+        for affected_symbol in blast_radius:
+            tests = await mapper.get_tests_for_symbol(affected_symbol, commit_sha)
+            affected_tests.update(tests)
+        
+        # Also include tests for the target symbol itself
+        target_tests = await mapper.get_tests_for_symbol(symbol_fqn, commit_sha)
+        affected_tests.update(target_tests)
+
         return {
             "symbol": symbol_fqn,
             "structural_callers": structural_impact_weighted,
             "historical_coupling": list(historical_impact),
-            "predicted_blast_radius": list(structural_impact.union(historical_impact))
+            "predicted_blast_radius": list(blast_radius),
+            "affected_tests": list(affected_tests)
         }

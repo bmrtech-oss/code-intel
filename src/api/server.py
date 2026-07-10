@@ -114,6 +114,7 @@ class QueryRequest(BaseModel):
 
 @app.post("/analyze")
 async def analyze(req: AnalyzeRequest, background_tasks: BackgroundTasks, db: AsyncSession = Depends(get_db)):
+    from ..settings import USE_TEMPORAL
     version = req.version or str(int(datetime.utcnow().timestamp()))
     actual_path = req.repo_path
     temp_handler = None
@@ -121,8 +122,15 @@ async def analyze(req: AnalyzeRequest, background_tasks: BackgroundTasks, db: As
         temp_handler = GitRepoHandler(req.repo_path, req.branch)
         actual_path = temp_handler.clone()
         background_tasks.add_task(temp_handler.cleanup)
-    job = queue.enqueue(run_ingestion, actual_path, version)
-    return {"status": "indexing started", "version": version, "job_id": job.id}
+    
+    if USE_TEMPORAL:
+        from ..worker.tasks import run_temporal_ingestion
+        # Temporal is durable and handles its own queue
+        background_tasks.add_task(run_temporal_ingestion, actual_path, version)
+        return {"status": "temporal indexing started", "version": version, "job_id": f"ingest-{version}"}
+    else:
+        job = queue.enqueue(run_ingestion, actual_path, version)
+        return {"status": "indexing started", "version": version, "job_id": job.id}
 
 @app.get("/status/{job_id}")
 async def status(job_id: str):
@@ -159,6 +167,35 @@ async def query(req: QueryRequest, db: AsyncSession = Depends(get_db)):
             elif req.rule == "impact":
                 result = await adapter.get_transitive_dependencies(version, req.symbol, max_depth=req.depth or 3)
                 return {"result": list(result)}
+            elif req.rule == "predict_impact":
+                from ..mcp import server as mcp_mod
+                if mcp_mod.impact_predictor:
+                    result = await mcp_mod.impact_predictor.predict_blast_radius(req.symbol, version)
+                    return {"result": result}
+                else:
+                    raise HTTPException(status_code=503, detail="Impact predictor not initialized")
+            elif req.rule == "verify_impact":
+                from ..mcp import server as mcp_mod
+                # Handle verify_impact via API (calls the same logic as MCP)
+                if mcp_mod.impact_predictor:
+                    impact = await mcp_mod.impact_predictor.predict_blast_radius(req.symbol, version)
+                    test_files = impact.get("affected_tests", [])
+                    
+                    if not test_files:
+                        return {"result": {"status": "warning", "message": "No relevant tests found.", "impact": impact}}
+
+                    import subprocess
+                    results = []
+                    for test_file in test_files:
+                        try:
+                            process = subprocess.run(["uv", "run", "pytest", test_file], capture_output=True, text=True, timeout=60)
+                            results.append({"file": test_file, "passed": process.returncode == 0, "stdout": process.stdout[-500:], "stderr": process.stderr[-500:]})
+                        except Exception as e:
+                            results.append({"file": test_file, "error": str(e)})
+
+                    return {"result": {"status": "success" if all(r.get("passed", False) for r in results) else "failure", "test_results": results, "impact": impact}}
+                else:
+                    raise HTTPException(status_code=503, detail="Impact predictor not initialized")
 
     dataflow = DataflowEngine(storage)
     rules = RuleEngine(storage, dataflow)

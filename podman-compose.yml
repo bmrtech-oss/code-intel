@@ -87,7 +87,7 @@ services:
         condition: service_healthy
     volumes:
       - ./src:/app/src
-    command: ["uv", "run", "rq", "worker", "ingestion"]
+    command: ["uv", "run", "rq", "worker", "ingestion", "llm"]
     restart: unless-stopped
 
   mcp-server:
