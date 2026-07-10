@@ -23,6 +23,7 @@ from ..cache.cdc_listener import CDCListener
 from ..cache.cache_bootstrap import CacheBootstrap
 from ..semantic.search import SemanticSearch
 from ..analytics.predictor import ImpactPredictor
+from ..analytics.cochange_model import CochangePredictor
 
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://postgres:password@postgres:5432/codeintel")
 engine = create_async_engine(DATABASE_URL)
@@ -143,6 +144,31 @@ TOOLS = [
             "required": ["symbol"]
         }
     ),
+    types.Tool(
+        name="predict_next_edit",
+        description="Predict which files will likely change based on historical patterns.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "symbol": {"type": "string"},
+                "commit_sha": {"type": "string"},
+                "threshold": {"type": "number", "default": 0.5}
+            },
+            "required": ["symbol"]
+        }
+    ),
+    types.Tool(
+        name="verify_impact",
+        description="Calculate blast radius, identify relevant tests, and execute them.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "symbol": {"type": "string"},
+                "commit_sha": {"type": "string"}
+            },
+            "required": ["symbol"]
+        }
+    ),
 ]
 
 @server.list_tools()
@@ -249,6 +275,65 @@ async def handle_call_tool(name: str, arguments: dict) -> list[types.TextContent
                 return [types.TextContent(type="text", text=json.dumps(result, indent=2))]
             else:
                 return [types.TextContent(type="text", text="Error: Impact predictor not initialized.")]
+
+        elif name == "verify_impact":
+            symbol = arguments.get("symbol")
+            if not impact_predictor:
+                return [types.TextContent(type="text", text="Error: Impact predictor not initialized.")]
+            
+            # 1. Get blast radius and affected tests
+            impact = await impact_predictor.predict_blast_radius(symbol, version)
+            test_files = impact.get("affected_tests", [])
+            
+            if not test_files:
+                return [types.TextContent(type="text", text=json.dumps({
+                    "status": "warning",
+                    "message": "No relevant tests found for this blast radius.",
+                    "impact": impact
+                }, indent=2))]
+
+            # 2. Execute tests
+            import subprocess
+            results = []
+            for test_file in test_files:
+                try:
+                    # Assuming pytest is used
+                    process = subprocess.run(
+                        ["uv", "run", "pytest", test_file],
+                        capture_output=True,
+                        text=True,
+                        timeout=60
+                    )
+                    results.append({
+                        "file": test_file,
+                        "passed": process.returncode == 0,
+                        "stdout": process.stdout[-500:], # last 500 chars
+                        "stderr": process.stderr[-500:]
+                    })
+                except Exception as e:
+                    results.append({
+                        "file": test_file,
+                        "error": str(e)
+                    })
+
+            return [types.TextContent(type="text", text=json.dumps({
+                "status": "success" if all(r.get("passed", False) for r in results) else "failure",
+                "test_results": results,
+                "impact": impact
+            }, indent=2))]
+
+        elif name == "predict_next_edit":
+            symbol = arguments.get("symbol")
+            threshold = arguments.get("threshold", 0.5)
+            if not adapter:
+                 return [types.TextContent(type="text", text="Error: Adapter not initialized.")]
+            
+            predictor = CochangePredictor(adapter)
+            predictions = await predictor.predict_next_edits(symbol, version, threshold)
+            return [types.TextContent(type="text", text=json.dumps({
+                "symbol": symbol,
+                "predictions": predictions
+            }, indent=2))]
 
         else:
             raise ValueError(f"Unknown tool: {name}")

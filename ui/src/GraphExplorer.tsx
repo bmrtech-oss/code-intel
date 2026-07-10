@@ -31,26 +31,55 @@ const GraphExplorer = () => {
         const newElements: any[] = [];
         const nodes = new Set<string>();
 
-        const addNode = (id: string, kind?: string) => {
+        const addNode = (id: string, kind?: string, intro?: string, del?: string, mod_count?: number) => {
           if (!nodes.has(id)) {
-            newElements.push({ data: { id, label: id, kind } });
+            newElements.push({ 
+              data: { 
+                id, 
+                label: id, 
+                kind,
+                introduced_in: intro,
+                deleted_in: del,
+                modification_count: mod_count || 0
+              } 
+            });
             nodes.add(id);
           }
         };
 
+        const getModCount = (fqn: string, symbols: any[]) => {
+            const sym = symbols.find(s => s.fqn === fqn);
+            return sym ? (sym.modified_in?.length || 0) : 0;
+        };
+
+        const allSyms = await fetchResource('get_symbols');
+
         calls.forEach((call: any) => {
-          addNode(call.from);
-          addNode(call.to);
+          addNode(call.from, undefined, call.introduced_in, call.deleted_in, getModCount(call.from, allSyms));
+          addNode(call.to, undefined, call.introduced_in, call.deleted_in, getModCount(call.to, allSyms));
           newElements.push({
-            data: { source: call.from, target: call.to, label: 'calls' }
+            data: { 
+              source: call.from, 
+              target: call.to, 
+              label: 'calls',
+              introduced_in: call.introduced_in,
+              deleted_in: call.deleted_in
+            }
           });
         });
 
         imports.forEach((imp: any) => {
-          addNode(imp.from);
-          addNode(imp.to, 'external');
+          addNode(imp.from, undefined, imp.introduced_in, imp.deleted_in);
+          addNode(imp.to, 'external', imp.introduced_in, imp.deleted_in);
           newElements.push({
-            data: { source: imp.from, target: imp.to, label: 'imports', type: 'IMPORTS_FROM' }
+            data: { 
+              source: imp.from, 
+              target: imp.to, 
+              label: 'imports', 
+              type: 'IMPORTS_FROM',
+              introduced_in: imp.introduced_in,
+              deleted_in: imp.deleted_in
+            }
           });
         });
 
@@ -84,6 +113,8 @@ const GraphExplorer = () => {
             'font-size': '10px',
             'text-valign': 'center',
             'text-halign': 'center',
+            'transition-property': 'opacity, background-color',
+            'transition-duration': '0.5s'
           }
         },
         {
@@ -93,7 +124,47 @@ const GraphExplorer = () => {
             'line-color': '#ccc',
             'target-arrow-color': '#ccc',
             'target-arrow-shape': 'triangle',
-            'curve-style': 'bezier'
+            'curve-style': 'bezier',
+            'transition-property': 'opacity, line-color',
+            'transition-duration': '0.5s'
+          }
+        },
+        {
+          selector: `[introduced_in = "${currentSha}"]`,
+          style: {
+            'background-color': '#3b82f6',
+            'line-color': '#3b82f6',
+            'target-arrow-color': '#3b82f6',
+            'opacity': 1
+          }
+        },
+        {
+          selector: `[deleted_in = "${currentSha}"]`,
+          style: {
+            'background-color': '#ef4444',
+            'line-color': '#ef4444',
+            'target-arrow-color': '#ef4444',
+            'opacity': 0
+          }
+        },
+        {
+          selector: 'node[modification_count > 0]',
+          style: {
+            'border-width': 2,
+            'border-color': '#f59e0b',
+          }
+        },
+        {
+          selector: 'node[modification_count > 5]',
+          style: {
+            'background-color': '#f97316',
+          }
+        },
+        {
+          selector: 'node[modification_count > 10]',
+          style: {
+            'background-color': '#dc2626',
+            'border-color': '#7f1d1d',
           }
         }
       ]}

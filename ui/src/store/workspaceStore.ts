@@ -4,8 +4,10 @@ interface WorkspaceState {
   currentBranch: string;
   currentSha: string;
   ancestors: string[];
+  allCommits: string[];
   recentCommits: string[];
   setWorkspace: (branch: string, sha: string, ancestors: string[]) => void;
+  setAllCommits: (commits: string[]) => void;
   setCurrentSha: (sha: string) => void;
 }
 
@@ -13,6 +15,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   currentBranch: 'main',
   currentSha: 'v2',
   ancestors: ['v2', 'v1'], // Match exported mock data
+  allCommits: ['v2', 'v1'],
   recentCommits: [],
   setWorkspace: (branch, sha, ancestors) => 
     set((state) => {
@@ -24,5 +27,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
             recentCommits: newRecent
         };
     }),
+  setAllCommits: (commits) => set({ allCommits: commits }),
   setCurrentSha: (sha) => set({ currentSha: sha }),
 }));

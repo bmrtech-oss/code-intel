@@ -2,6 +2,9 @@ import os
 import asyncio
 from redis import Redis
 from rq import Queue
+from temporalio import workflow, activity
+from temporalio.client import Client
+from datetime import timedelta
 from ..core.storage import VersionedStorage, AsyncSessionLocal
 from ..core.ingestion import IngestionPipeline
 
@@ -99,3 +102,55 @@ async def _generate_requirements_task(version: str):
 
 def generate_requirements_task(version: str):
     return asyncio.run(_generate_requirements_task(version))
+
+# --- Temporal Implementation ---
+
+@activity.defn
+async def walk_files_activity(root_path: str) -> list[str]:
+    file_list = []
+    for dirpath, _, filenames in os.walk(root_path):
+        for fname in filenames:
+            file_list.append(os.path.join(dirpath, fname))
+    return file_list
+
+@activity.defn
+async def parse_file_activity(file_path: str, version: str):
+    async with AsyncSessionLocal() as session:
+        storage = VersionedStorage(session)
+        pipeline = IngestionPipeline(storage)
+        await pipeline.parse_file(file_path, version)
+        await session.commit()
+
+@workflow.defn
+class IngestionWorkflow:
+    @workflow.run
+    async def run(self, repo_path: str, version: str):
+        # 1. Walk Files
+        files = await workflow.execute_activity(
+            walk_files_activity,
+            repo_path,
+            start_to_close_timeout=timedelta(minutes=5)
+        )
+        
+        # 2. Parallel Parsing (with retries and checkpointing)
+        # For very large repos, we'd chunk these
+        results = []
+        for file_path in files:
+            results.append(workflow.execute_activity(
+                parse_file_activity,
+                args=[file_path, version],
+                start_to_close_timeout=timedelta(minutes=2),
+                retry_policy=workflow.RetryPolicy(maximum_attempts=3)
+            ))
+        
+        await asyncio.gather(*results)
+        return {"status": "completed", "files_processed": len(files)}
+
+async def run_temporal_ingestion(repo_path: str, version: str):
+    client = await Client.connect("temporal:7233")
+    await client.execute_workflow(
+        IngestionWorkflow.run,
+        args=[repo_path, version],
+        id=f"ingest-{version}",
+        task_queue="ingestion-queue"
+    )

@@ -55,7 +55,7 @@ graph TB
 - **Hybrid Semantic Search**: Combines structural code identity with BGE-small embeddings via `txtai` for natural language code search.
 - **MCP-Native**: First-class Model Context Protocol (MCP) server for seamless integration with AI assistants like Claude Code.
 - **Multi-Repo Dependency Detection**: Cross-repo import tracking for Python, TypeScript, and Go, unified as `IMPORTS_FROM` edges.
-- **Declarative Analysis**: New analyses (e.g., dead code, impact) are simple SQL views, not complex code.
+- **Autonomic Engineering**: Targeted test execution via `verify_impact` to autonomously validate the safety of code modifications.
 - **Async LLM Workers**: Requirement generation is offloaded to a background task queue (RQ) to prevent UI blocking, with results retrieved via polling.
 - **JSON Schema Enforcement**: Uses Ollama's native grammar-constrained decoding to ensure 100% valid Pydantic models from the LLM.
 

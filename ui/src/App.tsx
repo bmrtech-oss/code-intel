@@ -1,9 +1,17 @@
 import { useWorkspaceStore } from './store/workspaceStore';
-import { GitBranch, Share2, MessageSquare } from 'lucide-react';
+import { GitBranch, Share2, MessageSquare, Clock } from 'lucide-react';
 import GraphExplorer from './GraphExplorer';
 
 function App() {
-  const { currentBranch, currentSha, ancestors, setCurrentSha } = useWorkspaceStore();
+  const { currentBranch, currentSha, ancestors, allCommits, setCurrentSha } = useWorkspaceStore();
+
+  const handleSliderChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const index = parseInt(e.target.value);
+    const reversed = [...allCommits].reverse();
+    setCurrentSha(reversed[index]);
+  };
+
+  const currentIndex = [...allCommits].reverse().indexOf(currentSha);
 
   return (
     <div className="flex h-screen w-full bg-gray-900 text-white overflow-hidden">
@@ -33,9 +41,27 @@ function App() {
 
       {/* Center Panel: Graph Visualization */}
       <div className="flex-1 flex flex-col">
-        <div className="p-4 border-b border-gray-700 flex items-center gap-2">
-          <Share2 size={18} />
-          <span className="font-semibold">Graph Explorer</span>
+        <div className="p-4 border-b border-gray-700 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Share2 size={18} />
+            <span className="font-semibold">Graph Explorer</span>
+          </div>
+          
+          {/* Timeline Scrubber */}
+          <div className="flex items-center gap-4 bg-gray-800 px-4 py-2 rounded-full border border-gray-600">
+            <Clock size={16} className="text-blue-400" />
+            <input 
+              type="range" 
+              min="0" 
+              max={allCommits.length - 1} 
+              value={currentIndex >= 0 ? currentIndex : 0}
+              onChange={handleSliderChange}
+              className="w-48 h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
+            />
+            <span className="text-xs font-mono text-blue-300 w-12 text-center">
+              {currentSha.substring(0, 7)}
+            </span>
+          </div>
         </div>
         <div className="flex-1 relative bg-black">
           <GraphExplorer />

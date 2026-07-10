@@ -14,10 +14,18 @@ class CodeIntelAgentTools:
         return json.dumps(res, indent=2)
 
     async def run_analytics(self, symbol: str, commit_sha: Optional[str] = None, depth: int = 3) -> str:
-        # Combined impact + predict_impact logic
+        # Combined impact + predict_impact + verify_impact (simulated via client.query)
         impact = await self.client.query("impact", symbol, commit_sha, depth)
         prediction = await self.client.query("predict_impact", symbol, commit_sha)
-        return json.dumps({"impact": impact, "prediction": prediction}, indent=2)
+        return json.dumps({
+            "impact": impact, 
+            "prediction": prediction
+        }, indent=2)
+
+    async def run_verification(self, symbol: str, commit_sha: Optional[str] = None) -> str:
+        # Note: This calls the verify_impact rule which handles the subprocess logic
+        res = await self.client.query("verify_impact", symbol, commit_sha)
+        return json.dumps(res, indent=2)
 
     async def run_requirements(self, action: str, job_id: Optional[str] = None, version: Optional[str] = None) -> str:
         if action == "generate":
@@ -53,6 +61,11 @@ def get_langchain_tools(base_url: str = "http://localhost:8000") -> List[Any]:
             description="Predict blast radius and impact of modifications for a given symbol."
         ),
         StructuredTool.from_function(
+            coroutine=tools_lib.run_verification,
+            name="code_intel_verification",
+            description="Run relevant tests covering the blast radius of a code modification."
+        ),
+        StructuredTool.from_function(
             coroutine=tools_lib.run_requirements,
             name="code_intel_requirements",
             description="Lifecycle for requirements generation. Actions: 'generate', 'status'."
@@ -73,6 +86,7 @@ def get_google_adk_tools(base_url: str = "http://localhost:8000") -> List[Any]:
     return [
         tools_lib.run_query,
         tools_lib.run_analytics,
+        tools_lib.run_verification,
         tools_lib.run_requirements,
         tools_lib.run_search
     ]

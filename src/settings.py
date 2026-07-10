@@ -5,3 +5,4 @@ DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://postgres:password
 REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
 REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
 READ_MODEL_STRICT_SYNC = os.getenv("READ_MODEL_STRICT_SYNC", "true").lower() == "true"
+USE_TEMPORAL = os.getenv("USE_TEMPORAL", "false").lower() == "true"
