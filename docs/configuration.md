@@ -26,21 +26,40 @@ Code-Intel can be configured using environment variables. You can create a `.env
 - `LLM_BASE_URL`: Base URL for the API (default: `https://openrouter.ai/api/v1`).
 - `LLM_TEMPERATURE`: LLM sampling temperature (default: 0.7).
 
-## Installation
+---
 
-Run the one-click installer:
-```bash
-./install.sh
-```
+## Script Reference
 
-For more options:
-```bash
-./install.sh --help
-```
+### `install.sh`
 
-## Running the Demo
+The one-click installer handles dependency syncing, infrastructure startup, and model initialization.
 
-To see Code-Intel in action:
-```bash
-./demo.sh
-```
+**Defaults:**
+- Virtual Environment: `.venv`
+- Env File: `.env`
+- Model Pulling: Enabled
+- Container Engine: Auto-detected (Podman > Docker Compose plugin > Docker-compose)
+
+**Options:**
+- `-v, --venv <name>`: Specify custom Python virtual environment.
+- `-s, --skip-models`: Skip pulling Ollama models (useful if using OpenRouter).
+- `-e, --env-file <path>`: Use a specific environment file.
+- `-h, --help`: Show help.
+
+### `demo.sh`
+
+Runs an end-to-end strategic demo of the platform's capabilities.
+
+**Defaults:**
+- LLM Provider: `ollama`
+- LLM Model: `phi3:mini`
+
+**Remote Optimization:**
+If an `--api-key` or `LLM_API_KEY` is detected, the script automatically switches the provider to `openrouter` and uses `google/gemini-flash-1.5` as a fast default to avoid local download delays.
+
+**Options:**
+- `--provider <name>`: LLM Provider (ollama|openrouter).
+- `--model <name>`: LLM Model identifier.
+- `--api-key <key>`: API Key for remote provider.
+- `--base-url <url>`: Base URL for remote provider.
+- `-h, --help`: Show help.

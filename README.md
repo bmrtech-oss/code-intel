@@ -93,7 +93,7 @@ For advanced configuration, see the [Configuration Guide](docs/configuration.md)
 ```bash
 ./demo.sh
 ```
-Experience the full power of Code-Intel (Intelligence, Prediction, Verification, and Autonomic Action) using the built-in Python example.
+Experience the full power of Code-Intel (Intelligence, Prediction, Verification, and Autonomic Action) using the built-in Python example. For a faster demo using cloud LLMs, run `./demo.sh --api-key YOUR_KEY`.
 
 ### Manual Setup
 ```bash

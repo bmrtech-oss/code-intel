@@ -2,12 +2,30 @@
 
 This guide walks through a complete local setup of Code-Intel, starting from prerequisites and ending with a small sample repository that can be indexed, queried, and used to generate requirements.
 
+## 🚀 Quick Start (One-Click)
+
+The easiest way to get started is using the provided installation script:
+
+```bash
+./install.sh
+```
+
+This script automates:
+- Dependency syncing via `uv`.
+- Infrastructure startup (PostgreSQL, Redis, Ollama).
+- Database migrations.
+- Ollama model initialization.
+
+For advanced options (skipping models, custom venv), run `./install.sh --help`.
+
+---
+
 ## 1. Prerequisites
 
 ### Supported environments
 - Ubuntu 22.04+, Debian 12+, or WSL2 on Windows 10/11
 - Python 3.11+
-- Podman or Docker-compatible runtime
+- Podman or Docker-compatible runtime (including Docker Compose V2 plugin)
 - Git
 
 ### Install system packages
@@ -19,199 +37,83 @@ sudo apt update
 sudo apt install -y git python3.11 python3.11-venv podman podman-compose
 ```
 
-If you are using WSL2, make sure your distribution has access to the container runtime. On Windows, Podman Desktop or Docker Desktop can be used as the backend.
-
 ### Install uv
 
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
-source ~/.bashrc
-uv --version
 ```
 
-## 2. Clone the repository
+---
+
+## 2. Configuration
+
+Code-Intel is configured via environment variables. See [Configuration Guide](docs/configuration.md) for details.
+
+To use **OpenRouter** (Cloud LLM) instead of local Ollama:
+1. Create a `.env` file (copy from `.env.example`).
+2. Set `LLM_PROVIDER=openrouter` and your `LLM_API_KEY`.
+3. Run `./install.sh --skip-models`.
+
+---
+
+## 3. Running the Strategic Demo
+
+To verify everything is working correctly, run the strategic demo:
 
 ```bash
-git clone https://github.com/bmrtech-oss/code-intel.git
-cd code-intel
+./demo.sh
 ```
 
-## 3. Create the Python environment
+If you are using OpenRouter, you can speed up the demo significantly:
+```bash
+./demo.sh --api-key YOUR_OPENROUTER_KEY
+```
 
-The project already includes a Linux virtual environment folder in the repo, but a fresh setup can be created with:
+---
 
+## 4. Manual Setup (Optional)
+
+If you prefer a manual flow instead of using `install.sh`:
+
+### 4.1 Create the Python environment
 ```bash
 uv sync
 ```
 
-If you want to use the repository-local environment explicitly:
-
-```bash
-uv venv .venv-linux
-source .venv-linux/bin/activate
-uv sync
-```
-
-## 4. Start the supporting services
-
-The project expects PostgreSQL, Redis, and Ollama to be available. The repo includes a Compose file for this purpose.
-
+### 4.2 Start the supporting services
 ```bash
 podman-compose up -d
+# Run database migrations
+uv run alembic upgrade head
 ```
 
-If you are using Docker instead of Podman, adjust the runtime command accordingly. Verify the services are running:
-
-```bash
-podman ps
-```
-
-You should see containers for the database, Redis, and Ollama.
-
-### Pull a model for requirements generation
-
+### 4.3 Pull a model (if using local Ollama)
 ```bash
 podman exec -it codeintel-ollama ollama pull phi3:mini
 ```
 
-This may take several minutes depending on your network speed.
-
-## 5. Start the API server
-
-From the repo root:
-
+### 4.4 Start the API server
 ```bash
-uv run python -m src.cli.main serve
+uv run code-intel serve
 ```
 
-The API will be available at:
-- http://localhost:8000/docs
-- http://localhost:8000/requirements
+---
 
-You can verify the API is up with:
-
-```bash
-curl http://localhost:8000/docs | head
-```
-
-## 6. Create sample test data
-
-A simple sample repository is enough to verify indexing, graph queries, and requirements generation.
-
-### 6.1 Create a small sample project
-
-```bash
-mkdir -p /tmp/codeintel-sample/src
-cat > /tmp/codeintel-sample/src/app.py <<'PY'
-from src.helpers import format_message
-
-
-def greet(name: str) -> str:
-    return format_message(f"Hello {name}")
-
-
-def unused_helper() -> str:
-    return "unused"
-PY
-
-cat > /tmp/codeintel-sample/src/helpers.py <<'PY'
-def format_message(text: str) -> str:
-    return text.upper()
-PY
-```
-
-This sample gives you:
-- one function that is used by another function
-- one unused helper that can appear in dead-code analysis
-
-### 6.2 Index the sample repository
-
-```bash
-uv run python -m src.cli.main analyze /tmp/codeintel-sample --version sample-v1
-```
-
-The indexing step parses the sample files and writes facts into the versioned storage layer.
-
-## 7. Exercise the core workflows
-
-### 7.1 Query dead code
-
-```bash
-curl -X POST http://localhost:8000/query \
-  -H "Content-Type: application/json" \
-  -d '{"rule": "dead_code", "commit_sha": "sample-v1"}'
-```
-
-You should see the unused helper appear in the result set.
-
-### 7.2 Query impact or call relationships
-
-```bash
-curl -X POST http://localhost:8000/query \
-  -H "Content-Type: application/json" \
-  -d '{"rule": "impact", "commit_sha": "sample-v1", "symbol": "src.app.greet"}'
-```
-
-### 7.3 Generate requirements
-
-```bash
-curl -X POST http://localhost:8000/requirements \
-  -H "Content-Type: application/json" \
-  -d '{"version": "sample-v1"}'
-```
-
-The endpoint returns structured requirements and stores traceability links for the underlying symbols.
-
-## 8. Start the MCP server (optional)
-
-If you want to use Code-Intel from an MCP-compatible client:
-
-```bash
-uv run python -m src.cli.main mcp
-```
-
-## 9. Start the web UI (optional)
-
-If the frontend is available in your checkout:
-
-```bash
-cd ui
-npm install
-npm run dev
-```
-
-Then open http://localhost:5173.
-
-## 10. Stop and reset services
-
-Stop the containers:
-
-```bash
-podman-compose down
-```
-
-To remove volumes and reset the database:
-
-```bash
-podman-compose down -v
-```
-
-## 11. Troubleshooting
+## 5. Troubleshooting
 
 ### API fails to start
-- Check the logs with `podman logs codeintel-api`.
+- Check the logs with `podman logs codeintel-api` (if using containers) or check your terminal output.
 - Confirm the database and Redis containers are healthy.
 
-### Requirements are empty
-- Ensure Ollama is running and the model was pulled successfully.
-- Verify the API can reach `http://ollama:11434` from the container network.
+### Requirements generation issues
+- If using Ollama, ensure the model was pulled successfully.
+- If using OpenRouter, verify your API key and internet connectivity.
+- Check [docs/configuration.md](docs/configuration.md) to ensure your provider settings match.
 
-### Indexing reports no symbols
-- Confirm the sample files exist at the path you passed into the analyzer.
-- Check that the repository uses a supported extension such as `.py`.
+---
 
-## 12. Next steps
+## 6. Next steps
 
-- Add more sample files in other languages.
-- Try the MCP workflow with Claude Code or similar clients.
-- Explore the benchmark script in the scripts folder for graph-engine comparisons.
+- [docs/use_cases_guide.md](docs/use_cases_guide.md) — practical use cases.
+- [docs/agent-integrations.md](docs/agent-integrations.md) — connecting to Claude or Cursor.
+- [docs/configuration.md](docs/configuration.md) — advanced settings.
