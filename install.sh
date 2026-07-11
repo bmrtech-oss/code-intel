@@ -76,15 +76,27 @@ else
 fi
 echo "✅ Using $COMPOSE_CMD"
 
-# Verify engine is responsive
+# Verify engine is responsive with a timeout to prevent infinite hangs
 echo "🚢 Checking container engine responsiveness..."
-if ! $COMPOSE_CMD ps >/dev/null 2>&1; then
-    echo "⚠️ Warning: Container engine seems unresponsive. Retrying..."
+if ! timeout 15s $COMPOSE_CMD ps >/dev/null 2>&1; then
+    echo "⚠️ Warning: Container engine ($COMPOSE_CMD) is not responding within 15s."
+    echo "This often happens if the Podman/Docker socket is deadlocked."
+    echo "Attempting to restart Podman services..."
+
+    if command -v systemctl >/dev/null 2>&1; then
+        sudo systemctl restart podman.socket podman.service 2>/dev/null || true
+    fi
+
     sleep 5
-    if ! $COMPOSE_CMD ps >/dev/null 2>&1; then
-        echo "❌ Error: Container engine ($COMPOSE_CMD) is not responding. Ensure Podman/Docker is running."
+    if ! timeout 15s $COMPOSE_CMD ps >/dev/null 2>&1; then
+        echo "❌ Error: Container engine is still not responding."
+        echo "Troubleshooting steps:"
+        echo "1. Run: podman system reset (⚠️ This removes all containers/images)"
+        echo "2. Restart Podman Desktop"
+        echo "3. Check SELinux logs: sudo journalctl -u podman"
         exit 1
     fi
+    echo "✅ Container engine recovered."
 fi
 
 # 2. Setup Python environment
@@ -107,7 +119,6 @@ if ! $COMPOSE_CMD --env-file "$ENV_FILE" up $UP_FLAGS; then
 fi
 
 # If in debug mode, the script won't proceed to the wait loop because 'up' is blocking.
-# This is intentional to let the user see the logs and then restart normally.
 if [ "$DEBUG" = true ]; then
     echo ""
     echo "⚠️ Debug session finished. Restart without -d to complete the setup."
@@ -118,10 +129,10 @@ fi
 echo "⏳ Waiting for services to be ready..."
 MAX_RETRIES=60
 COUNT=0
-until $COMPOSE_CMD exec -i api python -c "import sqlalchemy; print('API Ready')" > /dev/null 2>&1 || [ $COUNT -eq $MAX_RETRIES ]; do
+until timeout 10s $COMPOSE_CMD exec -i api python -c "import sqlalchemy; print('API Ready')" > /dev/null 2>&1 || [ $COUNT -eq $MAX_RETRIES ]; do
   # Fallback for ps formatting since podman-compose/docker-compose V1 don't support --format
   if [[ "$COMPOSE_CMD" == "docker compose" ]]; then
-      RUNNING_SERVICES=$($COMPOSE_CMD ps --format "{{.Service}} [{{.Status}}]" | tr '\n' ', ' | sed 's/, $//')
+      RUNNING_SERVICES=$(timeout 5s $COMPOSE_CMD ps --format "{{.Service}} [{{.Status}}]" | tr '\n' ', ' | sed 's/, $//')
       echo "   [$COUNT/$MAX_RETRIES] Status: $RUNNING_SERVICES"
   else
       echo "   [$COUNT/$MAX_RETRIES] Waiting for API service..."
@@ -147,7 +158,6 @@ echo "🤖 Configuring AI agent integrations..."
 if [ "$SKIP_MODELS" = false ]; then
     MODEL=$(grep LLM_MODEL "$ENV_FILE" 2>/dev/null | cut -d'=' -f2 | tr -d '"' || echo "phi3:mini")
     echo "🧠 Pulling Ollama model ($MODEL). This may take several minutes depending on your connection..."
-    # Ensure -i is used for streaming output. -t might not work in all CI/non-interactive shells, but -i usually does.
     $COMPOSE_CMD exec -i ollama ollama pull "$MODEL"
 else
     echo "⏭️ Skipping Ollama model pull."

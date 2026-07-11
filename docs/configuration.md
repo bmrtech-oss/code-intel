@@ -45,6 +45,23 @@ The platform will automatically clone the repository into a temporary directory,
 
 ---
 
+## Podman / Rocky Linux Troubleshooting
+
+If you are using Podman on Rocky Linux (or RHEL) and the installation "hangs" or the engine becomes unresponsive:
+
+1. **Storage Driver Performance**: Podman may report "Not using native diff for overlay." This causes slow image builds. Ensure your storage driver is optimized or use the `.dockerignore` file provided in the root to skip heavy local directories like `.venv`.
+2. **Socket Deadlocks**: If `podman ps` hangs, the Podman socket might be deadlocked. The `install.sh` script will attempt to restart the services, but you can also run:
+   ```bash
+   sudo systemctl restart podman.socket podman.service
+   ```
+3. **SELinux**: SELinux can sometimes block Podman socket access. Check with `sudo journalctl -xeu podman`.
+4. **System Reset**: As a last resort, if Podman is completely stuck, you can reset it (this deletes all your local containers and images):
+   ```bash
+   podman system reset
+   ```
+
+---
+
 ## Script Reference
 
 ### `install.sh`
