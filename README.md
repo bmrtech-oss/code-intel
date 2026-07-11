@@ -113,11 +113,17 @@ podman exec -it codeintel-ollama ollama pull phi3:mini
 ## Usage
 
 - API docs: http://localhost:8000/docs
-- Analyze a repo:
+- Analyze a repo (local path or remote Git URL):
 	```bash
+	# Local
 	curl -X POST http://localhost:8000/analyze \
 		-H "Content-Type: application/json" \
 		-d '{"repo_path": "/repo"}'
+
+	# Remote GitHub/GitLab
+	curl -X POST http://localhost:8000/analyze \
+		-H "Content-Type: application/json" \
+		-d '{"repo_path": "https://github.com/user/repo.git", "branch": "main"}'
 	```
 - Query dead code at specific commit:
 	```bash

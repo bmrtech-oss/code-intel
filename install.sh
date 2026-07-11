@@ -78,15 +78,23 @@ uv sync
 # 3. Start Infrastructure
 echo "🐳 Starting services (Postgres, Redis, Ollama)..."
 # Pass the env file to compose
-$COMPOSE_CMD --env-file "$ENV_FILE" up -d --build
+if ! $COMPOSE_CMD --env-file "$ENV_FILE" up -d --build; then
+    echo "❌ Error: Failed to start containers. Check the logs above."
+    exit 1
+fi
 
 # 4. Wait for Postgres and run migrations
 echo "⏳ Waiting for services to be ready..."
 MAX_RETRIES=60
 COUNT=0
 until $COMPOSE_CMD exec -i api python -c "import sqlalchemy; print('API Ready')" > /dev/null 2>&1 || [ $COUNT -eq $MAX_RETRIES ]; do
-  RUNNING_SERVICES=$($COMPOSE_CMD ps --format "{{.Service}} [{{.Status}}]" | tr '\n' ', ' | sed 's/, $//')
-  echo "   [$COUNT/$MAX_RETRIES] Current status: $RUNNING_SERVICES"
+  # Fallback for ps formatting since podman-compose/docker-compose V1 don't support --format
+  if [[ "$COMPOSE_CMD" == "docker compose" ]]; then
+      RUNNING_SERVICES=$($COMPOSE_CMD ps --format "{{.Service}} [{{.Status}}]" | tr '\n' ', ' | sed 's/, $//')
+      echo "   [$COUNT/$MAX_RETRIES] Status: $RUNNING_SERVICES"
+  else
+      echo "   [$COUNT/$MAX_RETRIES] Waiting for API service..."
+  fi
   sleep 5
   COUNT=$((COUNT + 1))
 done

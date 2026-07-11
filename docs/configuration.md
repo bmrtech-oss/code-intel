@@ -28,6 +28,23 @@ Code-Intel can be configured using environment variables. You can create a `.env
 
 ---
 
+## Source Code Ingestion
+
+Code-Intel supports indexing both local directories and remote Git repositories (GitHub, GitLab, Bitbucket, etc.).
+
+### Local Directory
+```bash
+uv run code-intel analyze /path/to/local/repo
+```
+
+### Remote Git Repository
+```bash
+uv run code-intel analyze https://github.com/user/repo.git --branch main --depth 1
+```
+The platform will automatically clone the repository into a temporary directory, analyze it, and then clean up.
+
+---
+
 ## Script Reference
 
 ### `install.sh`
