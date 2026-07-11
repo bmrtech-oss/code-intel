@@ -7,6 +7,7 @@ SKIP_MODELS=false
 COMPOSE_CMD=""
 ENV_FILE=".env"
 DEBUG=false
+REQUIRED_SPACE_GB=5
 
 # --- Functions ---
 show_help() {
@@ -76,7 +77,21 @@ else
 fi
 echo "✅ Using $COMPOSE_CMD"
 
-# Verify engine is responsive with a timeout to prevent infinite hangs
+# Disk Space Check
+FREE_SPACE=$(df -k . | awk 'NR==2 {print $4}')
+FREE_SPACE_GB=$((FREE_SPACE / 1024 / 1024))
+if [ "$FREE_SPACE_GB" -lt "$REQUIRED_SPACE_GB" ]; then
+    echo "⚠️ Warning: Low disk space detected ($FREE_SPACE_GB GB available). Installation may fail."
+    echo "Consider running 'podman system prune -a' or 'docker system prune -a' to free up space."
+    echo ""
+    read -p "Continue anyway? (y/N) " -n 1 -r
+    echo ""
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        exit 1
+    fi
+fi
+
+# Verify engine is responsive
 echo "🚢 Checking container engine responsiveness..."
 if ! timeout 15s $COMPOSE_CMD ps >/dev/null 2>&1; then
     echo "⚠️ Warning: Container engine ($COMPOSE_CMD) is not responding within 15s."
@@ -114,11 +129,13 @@ fi
 
 # Pass the env file to compose
 if ! $COMPOSE_CMD --env-file "$ENV_FILE" up $UP_FLAGS; then
-    echo "❌ Error: Failed to start containers. Check the logs above."
+    echo "❌ Error: Failed to start containers. If you see 'no space left on device':"
+    echo "1. Run: podman system prune -a"
+    echo "2. Run: podman volume prune"
     exit 1
 fi
 
-# If in debug mode, the script won't proceed to the wait loop because 'up' is blocking.
+# If in debug mode, the script won't proceed to the wait loop
 if [ "$DEBUG" = true ]; then
     echo ""
     echo "⚠️ Debug session finished. Restart without -d to complete the setup."
@@ -130,7 +147,6 @@ echo "⏳ Waiting for services to be ready..."
 MAX_RETRIES=60
 COUNT=0
 until timeout 10s $COMPOSE_CMD exec -i api python -c "import sqlalchemy; print('API Ready')" > /dev/null 2>&1 || [ $COUNT -eq $MAX_RETRIES ]; do
-  # Fallback for ps formatting since podman-compose/docker-compose V1 don't support --format
   if [[ "$COMPOSE_CMD" == "docker compose" ]]; then
       RUNNING_SERVICES=$(timeout 5s $COMPOSE_CMD ps --format "{{.Service}} [{{.Status}}]" | tr '\n' ', ' | sed 's/, $//')
       echo "   [$COUNT/$MAX_RETRIES] Status: $RUNNING_SERVICES"
