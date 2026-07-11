@@ -9,7 +9,7 @@ from typing import List, Dict, Any
 from pydantic import BaseModel
 from ..settings import (
     LLM_PROVIDER, LLM_MODEL, LLM_TEMPERATURE,
-    LLM_API_KEY, LLM_BASE_URL, OLLAMA_URL
+    LLM_API_KEY, GOOGLE_API_KEY, LLM_BASE_URL, OLLAMA_URL
 )
 
 PROMPTS_DIR = os.getenv("PROMPTS_DIR", "prompts")
@@ -76,6 +76,7 @@ HANDLER_MAP = {
     "phi": "phi3_mini.txt",
     "deepseek": "deepseek_coder.txt",
     "nuextract": "nuextract.txt",
+    "gemini": "phi3_mini.txt", # Defaulting to phi3_mini template for now
 }
 DEFAULT_PROMPT = "default.txt"
 
@@ -97,6 +98,11 @@ class LLMUDF:
         elif self.provider == "openrouter":
             self.base_url = LLM_BASE_URL or "https://openrouter.ai/api/v1"
             self.api_key = LLM_API_KEY
+        elif self.provider == "google":
+            import google.generativeai as genai
+            self.api_key = GOOGLE_API_KEY or LLM_API_KEY
+            genai.configure(api_key=self.api_key)
+            self.google_client = genai.GenerativeModel(self.model)
         else:
             logging.warning(f"Unknown LLM provider: {self.provider}. Defaulting to Ollama.")
             self.provider = "ollama"
@@ -117,8 +123,8 @@ class LLMUDF:
             async with httpx.AsyncClient() as client:
                 headers = {
                     "Authorization": f"Bearer {self.api_key}",
-                    "HTTP-Referer": "https://github.com/code-intel/code-intel", # Optional
-                    "X-Title": "Code-Intel", # Optional
+                    "HTTP-Referer": "https://github.com/code-intel/code-intel",
+                    "X-Title": "Code-Intel",
                     "Content-Type": "application/json"
                 }
                 payload = {
@@ -139,6 +145,24 @@ class LLMUDF:
                 resp.raise_for_status()
                 data = resp.json()
                 raw_text = data["choices"][0]["message"]["content"]
+        elif self.provider == "google":
+            import google.generativeai as genai
+            # Gemini response generation (blocking in current SDK, ideally run in thread)
+            import asyncio
+            loop = asyncio.get_event_loop()
+
+            def _gen():
+                resp = self.google_client.generate_content(
+                    prompt,
+                    generation_config=genai.GenerationConfig(
+                        response_mime_type="application/json",
+                        response_schema=RequirementResponse.model_json_schema(),
+                        temperature=LLM_TEMPERATURE
+                    )
+                )
+                return resp.text
+
+            raw_text = await loop.run_in_executor(None, _gen)
 
         parsed = self.handler.parse_response(raw_text)
         
@@ -182,7 +206,6 @@ class LLMUDF:
 
     async def generate_requirements_stream(self, symbols: List[Dict], calls: List[Dict]):
         if self.provider != "ollama":
-            # Streaming only supported for Ollama in this simplified version
             res = await self.generate_requirements(symbols, calls)
             yield json.dumps(res["result"])
             return

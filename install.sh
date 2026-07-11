@@ -67,34 +67,45 @@ fi
 # 1. LLM Configuration Prompt (if not configured)
 CURRENT_PROVIDER=$(grep LLM_PROVIDER "$ENV_FILE" 2>/dev/null | cut -d'=' -f2 | tr -d '"' || echo "ollama")
 CURRENT_KEY=$(grep LLM_API_KEY "$ENV_FILE" 2>/dev/null | cut -d'=' -f2 | tr -d '"' || echo "")
+CURRENT_GOOGLE_KEY=$(grep GOOGLE_API_KEY "$ENV_FILE" 2>/dev/null | cut -d'=' -f2 | tr -d '"' || echo "")
 
-if [ "$CURRENT_PROVIDER" == "ollama" ] && [ -z "$CURRENT_KEY" ] && [ -z "$LLM_API_KEY" ]; then
+if [ "$CURRENT_PROVIDER" == "ollama" ] && [ -z "$CURRENT_KEY" ] && [ -z "$LLM_API_KEY" ] && [ -z "$CURRENT_GOOGLE_KEY" ]; then
     echo ""
     echo "🤖 LLM Configuration"
     echo "-----------------"
     echo "Code-Intel needs an LLM to generate requirements."
     echo "Would you like to use a remote provider (faster, cloud-based) or local Ollama (private, requires ~5GB space)?"
-    echo "1) Remote (OpenRouter/OpenAI Compatible) [RECOMMENDED]"
-    echo "2) Local (Ollama)"
-    read -p "Selection (1/2): " -n 1 -r LLM_CHOICE
+    echo "1) Remote (OpenRouter) [RECOMMENDED]"
+    echo "2) Remote (Google Gemini)"
+    echo "3) Local (Ollama)"
+    read -p "Selection (1/2/3): " -n 1 -r LLM_CHOICE
     echo ""
 
     if [[ "$LLM_CHOICE" == "1" ]]; then
         read -p "Enter your OpenRouter API Key (sk-or-...): " INPUT_KEY
         if [ -n "$INPUT_KEY" ]; then
-            # Update .env
             sed -i "s/LLM_PROVIDER=ollama/LLM_PROVIDER=openrouter/" "$ENV_FILE"
             sed -i "s/LLM_MODEL=phi3:mini/LLM_MODEL=google\/gemini-flash-1.5/" "$ENV_FILE"
-            # Replace commented or empty API key
             if grep -q "LLM_API_KEY=" "$ENV_FILE"; then
                 sed -i "s/.*LLM_API_KEY=.*/LLM_API_KEY=$INPUT_KEY/" "$ENV_FILE"
             else
                 echo "LLM_API_KEY=$INPUT_KEY" >> "$ENV_FILE"
             fi
             SKIP_MODELS=true
-            echo "✅ Configured for OpenRouter. Skipping local model downloads."
-        else
-            echo "⚠️ No key provided. Falling back to local Ollama."
+            echo "✅ Configured for OpenRouter."
+        fi
+    elif [[ "$LLM_CHOICE" == "2" ]]; then
+        read -p "Enter your Google API Key: " INPUT_KEY
+        if [ -n "$INPUT_KEY" ]; then
+            sed -i "s/LLM_PROVIDER=ollama/LLM_PROVIDER=google/" "$ENV_FILE"
+            sed -i "s/LLM_MODEL=phi3:mini/LLM_MODEL=gemini-1.5-flash/" "$ENV_FILE"
+            if grep -q "GOOGLE_API_KEY=" "$ENV_FILE"; then
+                sed -i "s/.*GOOGLE_API_KEY=.*/GOOGLE_API_KEY=$INPUT_KEY/" "$ENV_FILE"
+            else
+                echo "GOOGLE_API_KEY=$INPUT_KEY" >> "$ENV_FILE"
+            fi
+            SKIP_MODELS=true
+            echo "✅ Configured for Google Gemini."
         fi
     fi
 fi
@@ -138,7 +149,7 @@ if [ "$FREE_SPACE_GB" -lt "$REQUIRED_SPACE_GB" ] && [ "$SKIP_MODELS" = false ]; 
     fi
 fi
 
-# Verify engine is responsive
+# Verify engine is responsive with a timeout
 echo "🚢 Checking container engine responsiveness..."
 if ! timeout 15s $COMPOSE_CMD ps >/dev/null 2>&1; then
     echo "⚠️ Warning: Container engine ($COMPOSE_CMD) is not responding within 15s."
@@ -159,7 +170,8 @@ fi
 # 2. Setup Python environment
 echo "📦 Syncing Python dependencies (Env: $VENV_NAME)..."
 export UV_PROJECT_ENVIRONMENT="$VENV_NAME"
-uv sync
+# Ensure the 'agents' extra is included for Google Gemini support
+uv sync --extra agents
 
 # 3. Start Infrastructure
 echo "🐳 Starting services (Postgres, Redis, Ollama)..."
@@ -169,11 +181,13 @@ if [ "$DEBUG" = true ]; then
     UP_FLAGS="--build"
 fi
 
+# Pass the env file to compose
 if ! $COMPOSE_CMD --env-file "$ENV_FILE" up $UP_FLAGS; then
     echo "❌ Error: Failed to start containers. Check logs or disk space."
     exit 1
 fi
 
+# If in debug mode, the script won't proceed to the wait loop
 if [ "$DEBUG" = true ]; then
     echo ""
     echo "⚠️ Debug session finished. Restart without -d to complete the setup."

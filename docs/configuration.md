@@ -26,6 +26,12 @@ Code-Intel can be configured using environment variables. You can create a `.env
 - `LLM_BASE_URL`: Base URL for the API (default: `https://openrouter.ai/api/v1`).
 - `LLM_TEMPERATURE`: LLM sampling temperature (default: 0.7).
 
+#### Google Gemini
+- `LLM_PROVIDER`: `google`
+- `LLM_MODEL`: The model identifier (e.g., `gemini-1.5-flash`).
+- `GOOGLE_API_KEY`: Your Google AI Studio API key.
+- `LLM_TEMPERATURE`: LLM sampling temperature (default: 0.7).
+
 ---
 
 ## Source Code Ingestion
