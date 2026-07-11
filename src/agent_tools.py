@@ -14,12 +14,14 @@ class CodeIntelAgentTools:
         return json.dumps(res, indent=2)
 
     async def run_analytics(self, symbol: str, commit_sha: Optional[str] = None, depth: int = 3) -> str:
-        # Combined impact + predict_impact + verify_impact (simulated via client.query)
+        # Combined impact + predict_impact + predict_next_edit
         impact = await self.client.query("impact", symbol, commit_sha, depth)
         prediction = await self.client.query("predict_impact", symbol, commit_sha)
+        cochange = await self.client.query("predict_next_edit", symbol, commit_sha)
         return json.dumps({
             "impact": impact, 
-            "prediction": prediction
+            "prediction": prediction,
+            "likely_next_edits": cochange
         }, indent=2)
 
     async def run_verification(self, symbol: str, commit_sha: Optional[str] = None) -> str:

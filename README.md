@@ -83,9 +83,9 @@ sequenceDiagram
 
 ### One-Click Installation (Recommended)
 ```bash
-./install.sh
+./install.sh [env_name]
 ```
-This script handles dependency syncing, starts the infrastructure, runs migrations, pulls the required LLM models, and configures AI agent integrations for Claude and Cursor.
+This script handles dependency syncing, starts the infrastructure, runs migrations, pulls the required LLM models, and configures AI agent integrations. You can optionally provide a custom name for the Python virtual environment (defaults to `.venv`).
 
 ### One-Click Strategic Demo
 ```bash

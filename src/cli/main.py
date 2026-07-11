@@ -163,8 +163,17 @@ def setup_claude():
         typer.echo("Unsupported OS for auto-setup.")
         return
 
+    # Try to find the local uv environment
+    import sys
+    executable = sys.executable
+    if "uv" in executable or ".venv" in executable:
+        command = ["uv", "run", "code-intel-mcp"]
+    else:
+        command = ["code-intel-mcp"]
+
     mcp_config = {
-        "command": "code-intel-mcp",
+        "command": command[0],
+        "args": command[1:],
         "env": {
             "DATABASE_URL": os.getenv("DATABASE_URL", "postgresql+asyncpg://postgres:password@localhost:5432/codeintel"),
             "USE_BITEMPORAL": "true"
