@@ -1,14 +1,17 @@
 import json
 import os
 import re
+import httpx
+import logging
 from abc import ABC, abstractmethod
 from ollama import AsyncClient
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
+from ..settings import (
+    LLM_PROVIDER, LLM_MODEL, LLM_TEMPERATURE,
+    LLM_API_KEY, LLM_BASE_URL, OLLAMA_URL
+)
 
-OLLAMA_URL = os.getenv("OLLAMA_URL", "http://ollama:11434")
-MODEL = os.getenv("LLM_MODEL", "phi3:mini")
-TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.7"))
 PROMPTS_DIR = os.getenv("PROMPTS_DIR", "prompts")
 
 class Task(BaseModel):
@@ -33,8 +36,13 @@ class ModelHandler(ABC):
 
 class FileBasedHandler(ModelHandler):
     def __init__(self, prompt_file: str):
-        with open(os.path.join(PROMPTS_DIR, prompt_file), 'r') as f:
-            self.template = f.read()
+        prompt_path = os.path.join(PROMPTS_DIR, prompt_file)
+        if os.path.exists(prompt_path):
+            with open(prompt_path, 'r') as f:
+                self.template = f.read()
+        else:
+            logging.warning(f"Prompt file {prompt_path} not found. Using default template.")
+            self.template = "Analyze the following code and generate requirements in JSON format.\nSymbols: {{symbols}}\nCalls: {{calls}}"
 
     def build_prompt(self, symbols, calls):
         symbols_str = json.dumps(symbols, indent=2) if symbols else "No symbols found."
@@ -42,12 +50,10 @@ class FileBasedHandler(ModelHandler):
         return self.template.replace('{{symbols}}', symbols_str).replace('{{calls}}', calls_str)
 
     def parse_response(self, raw_response: str) -> Dict[str, Any]:
-        # With constrained decoding, we expect direct JSON.
         cleaned = raw_response.strip()
         try:
             return json.loads(cleaned)
         except json.JSONDecodeError:
-            # Ultra-rare fallback if Ollama returns extra text despite format: json
             match = re.search(r'\{.*\}', cleaned, re.DOTALL)
             if match:
                 try:
@@ -55,9 +61,7 @@ class FileBasedHandler(ModelHandler):
                 except json.JSONDecodeError:
                     pass
             
-            # If it's still failing, it might be a partial JSON from a stream or a broken response
-            import logging
-            logging.warning(f"Ollama grammar enforcement may have failed. Trying json_repair. Raw: {raw_response[:100]}...")
+            logging.warning(f"JSON parsing failed. Trying json_repair. Raw: {raw_response[:100]}...")
             try:
                 from json_repair import repair_json
                 repaired = repair_json(cleaned)
@@ -66,21 +70,6 @@ class FileBasedHandler(ModelHandler):
                 logging.error(f"json_repair also failed: {e}")
             
             return {"raw": raw_response, "error": "Could not parse JSON"}
-    
-    # def parse_response(self, raw_response: str) -> Dict[str, Any]:
-    #     # Generic JSON extraction (same as before)
-    #     import re
-    #     cleaned = re.sub(r'^```json\s*|\s*```$', '', raw_response.strip(), flags=re.MULTILINE)
-    #     try:
-    #         return json.loads(cleaned)
-    #     except:
-    #         match = re.search(r'\{.*\}', raw_response, re.DOTALL)
-    #         if match:
-    #             try:
-    #                 return json.loads(match.group())
-    #             except:
-    #                 pass
-    #     return {"raw": raw_response, "error": "Could not parse JSON"}
 
 # Factory mapping model name patterns to prompt file names
 HANDLER_MAP = {
@@ -99,34 +88,71 @@ def get_handler(model_name: str) -> ModelHandler:
 
 class LLMUDF:
     def __init__(self):
-        self.client = AsyncClient(host=OLLAMA_URL)
-        self.handler = get_handler(MODEL)
+        self.provider = LLM_PROVIDER.lower()
+        self.model = LLM_MODEL
+        self.handler = get_handler(self.model)
+
+        if self.provider == "ollama":
+            self.ollama_client = AsyncClient(host=OLLAMA_URL)
+        elif self.provider == "openrouter":
+            self.base_url = LLM_BASE_URL or "https://openrouter.ai/api/v1"
+            self.api_key = LLM_API_KEY
+        else:
+            logging.warning(f"Unknown LLM provider: {self.provider}. Defaulting to Ollama.")
+            self.provider = "ollama"
+            self.ollama_client = AsyncClient(host=OLLAMA_URL)
 
     async def generate_requirements(self, symbols: List[Dict], calls: List[Dict]) -> Dict[str, Any]:
         prompt = self.handler.build_prompt(symbols, calls)
-        print(f"DEBUG: Prompt length {len(prompt)}")
-        response = await self.client.generate(
-            model=MODEL,
-            prompt=prompt,
-            format=RequirementResponse.model_json_schema(),
-            options={"temperature": TEMPERATURE}
-        )
-        parsed = self.handler.parse_response(response.response)
+
+        if self.provider == "ollama":
+            response = await self.ollama_client.generate(
+                model=self.model,
+                prompt=prompt,
+                format=RequirementResponse.model_json_schema(),
+                options={"temperature": LLM_TEMPERATURE}
+            )
+            raw_text = response.response
+        elif self.provider == "openrouter":
+            async with httpx.AsyncClient() as client:
+                headers = {
+                    "Authorization": f"Bearer {self.api_key}",
+                    "HTTP-Referer": "https://github.com/code-intel/code-intel", # Optional
+                    "X-Title": "Code-Intel", # Optional
+                    "Content-Type": "application/json"
+                }
+                payload = {
+                    "model": self.model,
+                    "messages": [
+                        {"role": "system", "content": "You are a helpful assistant that outputs JSON."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    "response_format": {"type": "json_object"},
+                    "temperature": LLM_TEMPERATURE
+                }
+                resp = await client.post(
+                    f"{self.base_url}/chat/completions",
+                    headers=headers,
+                    json=payload,
+                    timeout=60.0
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                raw_text = data["choices"][0]["message"]["content"]
+
+        parsed = self.handler.parse_response(raw_text)
         
         # Explicit validation
         if "error" not in parsed:
             try:
                 RequirementResponse.model_validate(parsed)
             except Exception as e:
-                import logging
-                logging.error(f"Pydantic validation failed for Ollama response: {e}")
+                logging.error(f"Pydantic validation failed: {e}")
                 parsed["error"] = f"Validation failed: {str(e)}"
-        print(f"DEBUG: Raw response: {response.response}")
         
         # Grounding fact IDs
         grounded_in = [s["id"] for s in symbols if "id" in s] + [c["id"] for c in calls if "id" in c]
         
-        # Simple validation
         is_verified, confidence = self.validate_artifact(parsed, symbols, calls)
         
         return {
@@ -134,17 +160,14 @@ class LLMUDF:
             "provenance": {
                 "grounded_in": grounded_in,
                 "prompt": prompt,
-                "model": MODEL,
+                "model": self.model,
                 "is_verified": is_verified,
                 "confidence": confidence
             }
         }
 
     def validate_artifact(self, artifact: Dict[str, Any], symbols: List[Dict], calls: List[Dict]) -> (bool, float):
-        """
-        Simple validation: check if cited symbol IDs actually exist in context.
-        """
-        if "tasks" not in artifact:
+        if not isinstance(artifact, dict) or "tasks" not in artifact:
             return True, 1.0
             
         all_symbol_ids = {str(s.get("id")) for s in symbols}
@@ -154,17 +177,22 @@ class LLMUDF:
             traceability = task.get("traceability", [])
             for sid in traceability:
                 if str(sid) not in all_symbol_ids:
-                    # hallucination detected
                     return False, 0.5
         return True, 1.0
 
     async def generate_requirements_stream(self, symbols: List[Dict], calls: List[Dict]):
+        if self.provider != "ollama":
+            # Streaming only supported for Ollama in this simplified version
+            res = await self.generate_requirements(symbols, calls)
+            yield json.dumps(res["result"])
+            return
+
         prompt = self.handler.build_prompt(symbols, calls)
-        async for chunk in await self.client.generate(
-            model=MODEL,
+        async for chunk in await self.ollama_client.generate(
+            model=self.model,
             prompt=prompt,
             format=RequirementResponse.model_json_schema(),
-            options={"temperature": TEMPERATURE},
+            options={"temperature": LLM_TEMPERATURE},
             stream=True
         ):
             yield chunk.response

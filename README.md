@@ -83,9 +83,11 @@ sequenceDiagram
 
 ### One-Click Installation (Recommended)
 ```bash
-./install.sh [env_name]
+./install.sh
 ```
-This script handles dependency syncing, starts the infrastructure, runs migrations, pulls the required LLM models, and configures AI agent integrations. You can optionally provide a custom name for the Python virtual environment (defaults to `.venv`).
+This script handles dependency syncing, starts the infrastructure, runs migrations, pulls the required LLM models, and configures AI agent integrations. Run `./install.sh --help` for options like skipping models or using a custom venv.
+
+For advanced configuration, see the [Configuration Guide](docs/configuration.md).
 
 ### One-Click Strategic Demo
 ```bash

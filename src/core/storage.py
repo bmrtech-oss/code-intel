@@ -7,10 +7,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
 from .models import Fact, DerivedFact, LLMArtifact, GraphNode, GraphEdge
+from ..settings import LLM_MODEL, DATABASE_URL
 
 EXTRACTOR_VERSION = "1.0.0"
-MODEL = os.getenv("LLM_MODEL", "phi3:mini")
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://postgres:password@localhost:5432/codeintel")
+MODEL = LLM_MODEL
 
 engine = create_async_engine(DATABASE_URL, echo=True)
 AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
