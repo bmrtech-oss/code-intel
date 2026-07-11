@@ -8,7 +8,8 @@ COMPOSE_CMD=""
 ENV_FILE=".env"
 DEBUG=false
 PURGE=false
-REQUIRED_SPACE_GB=5
+REQUIRED_SPACE_GB=3
+SKIP_VENV=false
 
 # --- Functions ---
 show_help() {
@@ -20,6 +21,7 @@ show_help() {
     echo "  -e, --env-file <path> Path to environment file (default: .env)"
     echo "  -d, --debug           Enable debug mode (don't detach containers, show full logs)"
     echo "  -p, --purge           Run cleanup (purge.sh) before starting installation"
+    echo "  --skip-venv           Skip creating local virtual environment (saves ~5GB host space)"
     echo "  -h, --help            Show this help message"
     echo ""
     echo "Examples:"
@@ -50,6 +52,10 @@ while [[ $# -gt 0 ]]; do
             PURGE=true
             shift
             ;;
+        --skip-venv)
+            SKIP_VENV=true
+            shift
+            ;;
         -h|--help)
             show_help
             exit 0
@@ -74,21 +80,20 @@ if [ ! -f "$ENV_FILE" ] && [ "$ENV_FILE" == ".env" ]; then
     cp .env.example .env
 fi
 
-# 1. Mandatory LLM Configuration Prompt
+# 1. Mandatory LLM Configuration Prompt (Priority: Google Gemini)
 CURRENT_PROVIDER=$(grep LLM_PROVIDER "$ENV_FILE" 2>/dev/null | cut -d'=' -f2 | tr -d '"' || echo "")
-CURRENT_KEY=$(grep LLM_API_KEY "$ENV_FILE" 2>/dev/null | cut -d'=' -f2 | tr -d '"' || echo "")
 CURRENT_GOOGLE_KEY=$(grep GOOGLE_API_KEY "$ENV_FILE" 2>/dev/null | cut -d'=' -f2 | tr -d '"' || echo "")
+CURRENT_OR_KEY=$(grep LLM_API_KEY "$ENV_FILE" 2>/dev/null | cut -d'=' -f2 | tr -d '"' || echo "")
 
-# If provider is not explicitly set in .env or keys are missing, prompt user
-if [ -z "$CURRENT_PROVIDER" ] || ([ "$CURRENT_PROVIDER" == "google" ] && [ -z "$CURRENT_GOOGLE_KEY" ]) || ([ "$CURRENT_PROVIDER" == "openrouter" ] && [ -z "$CURRENT_KEY" ]); then
+if [ -z "$CURRENT_PROVIDER" ] || ([ "$CURRENT_PROVIDER" == "google" ] && [ -z "$CURRENT_GOOGLE_KEY" ]) || ([ "$CURRENT_PROVIDER" == "ollama" ] && [ -z "$LLM_API_KEY" ] && [ -z "$GOOGLE_API_KEY" ]); then
     echo ""
-    echo "🤖 LLM Configuration (Required)"
+    echo "🤖 LLM Configuration (Mandatory)"
     echo "----------------------------"
-    echo "Code-Intel requires an LLM provider. Remote providers are RECOMMENDED for speed and space."
-    echo "1) Google Gemini (Remote) [DEFAULT/FASTEST]"
+    echo "To save disk space and ensure high performance, a cloud provider is RECOMMENDED."
+    echo "1) Google Gemini (Remote) [DEFAULT - FASTEST/SMALLEST FOOTPRINT]"
     echo "2) OpenRouter (Remote)"
-    echo "3) Ollama (Local - requires ~5GB space & slow download)"
-    read -p "Select provider (1/2/3): " -n 1 -r LLM_CHOICE
+    echo "3) Ollama (Local - ⚠️ Requires ~5GB extra disk space and slow model download)"
+    read -p "Selection (1/2/3): " -n 1 -r LLM_CHOICE
     echo ""
 
     case "$LLM_CHOICE" in
@@ -109,8 +114,8 @@ if [ -z "$CURRENT_PROVIDER" ] || ([ "$CURRENT_PROVIDER" == "google" ] && [ -z "$
             sed -i "s/LLM_PROVIDER=.*/LLM_PROVIDER=ollama/" "$ENV_FILE"
             sed -i "s/LLM_MODEL=.*/LLM_MODEL=phi3:mini/" "$ENV_FILE"
             ;;
-        *) # Default to Google Gemini
-            read -p "Enter Google API Key: " INPUT_KEY
+        *) # Default: Google Gemini
+            read -p "Enter Google Gemini API Key: " INPUT_KEY
             if [ -n "$INPUT_KEY" ]; then
                 sed -i "s/LLM_PROVIDER=.*/LLM_PROVIDER=google/" "$ENV_FILE"
                 sed -i "s/LLM_MODEL=.*/LLM_MODEL=gemini-1.5-flash/" "$ENV_FILE"
@@ -120,21 +125,22 @@ if [ -z "$CURRENT_PROVIDER" ] || ([ "$CURRENT_PROVIDER" == "google" ] && [ -z "$
                     echo "GOOGLE_API_KEY=$INPUT_KEY" >> "$ENV_FILE"
                 fi
                 SKIP_MODELS=true
+                echo "✅ Configured for Google Gemini."
             else
-                echo "⚠️ No key provided. Proceeding with default config (Ollama fallback)."
+                echo "⚠️ No key provided. Falling back to Ollama local defaults."
                 sed -i "s/LLM_PROVIDER=.*/LLM_PROVIDER=ollama/" "$ENV_FILE"
             fi
             ;;
     esac
 fi
 
-# Re-check SKIP_MODELS based on final provider
+# Final check for SKIP_MODELS
 FINAL_PROVIDER=$(grep LLM_PROVIDER "$ENV_FILE" 2>/dev/null | cut -d'=' -f2 | tr -d '"' || echo "ollama")
 if [ "$FINAL_PROVIDER" != "ollama" ]; then
     SKIP_MODELS=true
 fi
 
-# 1. Check prerequisites
+# 2. Check prerequisites
 echo "🔍 Checking prerequisites..."
 if ! command -v uv >/dev/null 2>&1; then
     echo "❌ uv is required. Install it via 'curl -LsSf https://astral.sh/uv/install.sh | sh'"
@@ -156,58 +162,53 @@ echo "✅ Using $COMPOSE_CMD"
 # Disk Space Check
 FREE_SPACE=$(df -k . | awk 'NR==2 {print $4}')
 FREE_SPACE_GB=$((FREE_SPACE / 1024 / 1024))
-if [ "$FREE_SPACE_GB" -lt "$REQUIRED_SPACE_GB" ] && [ "$SKIP_MODELS" = false ]; then
-    echo "⚠️ Warning: Low disk space detected ($FREE_SPACE_GB GB available). Local Ollama models may fail to pull."
-    echo "Consider running './purge.sh' or switching to a remote LLM provider (Google Gemini)."
-    echo ""
-    read -p "Continue anyway? (y/N) " -n 1 -r
-    echo ""
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        exit 1
+if [ "$FREE_SPACE_GB" -lt "$REQUIRED_SPACE_GB" ]; then
+    echo "⚠️ Warning: Low disk space detected ($FREE_SPACE_GB GB available)."
+    if [ "$SKIP_MODELS" = false ]; then
+        echo "Local Ollama models require ~5GB. Please switch to a remote provider or free up space."
+        read -p "Continue anyway? (y/N) " -n 1 -r
+        echo ""
+        [[ ! $REPLY =~ ^[Yy]$ ]] && exit 1
     fi
 fi
 
-# Verify engine is responsive with a timeout
+# Verify engine is responsive
 echo "🚢 Checking container engine responsiveness..."
 if ! timeout 15s $COMPOSE_CMD ps >/dev/null 2>&1; then
-    echo "⚠️ Warning: Container engine ($COMPOSE_CMD) is not responding within 15s."
-    echo "Attempting to restart services..."
+    echo "⚠️ Warning: Container engine ($COMPOSE_CMD) is not responding. Attempting restart..."
     if command -v systemctl >/dev/null 2>&1; then
         sudo systemctl restart podman.socket podman.service 2>/dev/null || true
     fi
     sleep 5
     if ! timeout 15s $COMPOSE_CMD ps >/dev/null 2>&1; then
-        echo "❌ Error: Container engine is still not responding."
+        echo "❌ Error: Container engine is still not responding. Run: podman system reset"
         exit 1
     fi
-    echo "✅ Container engine recovered."
 fi
 
-# 2. Setup Python environment
-echo "📦 Syncing Python dependencies (Env: $VENV_NAME)..."
-export UV_PROJECT_ENVIRONMENT="$VENV_NAME"
-# Use --no-cache to save disk space
-uv sync --extra agents --no-cache
+# 3. Setup Python environment
+if [ "$SKIP_VENV" = false ]; then
+    echo "📦 Syncing Python dependencies (Env: $VENV_NAME)..."
+    echo "⚠️ This will consume ~5GB on your host machine. Use --skip-venv if only running in containers."
+    export UV_PROJECT_ENVIRONMENT="$VENV_NAME"
+    uv sync --extra agents --no-cache
+else
+    echo "⏭️ Skipping local virtual environment creation."
+fi
 
-# 3. Start Infrastructure
+# 4. Start Infrastructure
 echo "🐳 Starting services (Postgres, Redis, Ollama)..."
 UP_FLAGS="-d --build"
-if [ "$DEBUG" = true ]; then
-    UP_FLAGS="--build"
-fi
+[ "$DEBUG" = true ] && UP_FLAGS="--build"
 
 if ! $COMPOSE_CMD --env-file "$ENV_FILE" up $UP_FLAGS; then
-    echo "❌ Error: Failed to start containers. If out of space, run './purge.sh' and try remote LLM."
+    echo "❌ Error: Failed to start containers. If 'no space left', run './purge.sh' and use cloud LLM."
     exit 1
 fi
 
-if [ "$DEBUG" = true ]; then
-    echo ""
-    echo "⚠️ Debug session finished. Restart without -d to complete setup."
-    exit 0
-fi
+[ "$DEBUG" = true ] && echo "⚠️ Debug session finished." && exit 0
 
-# 4. Wait for Postgres and run migrations
+# 5. Wait for API and run migrations
 echo "⏳ Waiting for services to be ready..."
 MAX_RETRIES=60
 COUNT=0
@@ -223,19 +224,18 @@ until timeout 10s $COMPOSE_CMD exec -i api python -c "import sqlalchemy; print('
 done
 
 if [ $COUNT -eq $MAX_RETRIES ]; then
-    echo "❌ Error: API service failed to start in time."
-    $COMPOSE_CMD logs api
+    echo "❌ Error: API service failed to start."
     exit 1
 fi
 
 echo "📂 Running database migrations..."
 $COMPOSE_CMD exec -i api alembic upgrade head
 
-# 5. Setup AI Agent Integrations
+# 6. Setup AI Agent Integrations
 echo "🤖 Configuring AI agent integrations..."
 ./scripts/setup-agent.sh
 
-# 6. Initialize local Ollama model
+# 7. Initialize local Ollama model (if applicable)
 if [ "$SKIP_MODELS" = false ]; then
     MODEL=$(grep LLM_MODEL "$ENV_FILE" 2>/dev/null | cut -d'=' -f2 | tr -d '"' || echo "phi3:mini")
     echo "🧠 Pulling Ollama model ($MODEL). This may take several minutes..."
@@ -252,4 +252,8 @@ echo "Web UI:      http://localhost:5173"
 echo "MCP Server:  Configured for Claude Desktop & Cursor"
 echo ""
 echo "To analyze your first repository:"
-echo "uv run --env $VENV_NAME code-intel analyze <PATH>"
+if [ "$SKIP_VENV" = false ]; then
+    echo "uv run --env $VENV_NAME code-intel analyze <PATH>"
+else
+    echo "curl -X POST http://localhost:8000/analyze -d '{\"repo_path\": \"<PATH>\"}'"
+fi

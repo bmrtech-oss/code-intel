@@ -65,10 +65,12 @@ If you are using Podman on Rocky Linux (or RHEL) and the installation "hangs" or
    ```bash
    podman system reset
    ```
-5. **Disk Space Management**: Image builds and Ollama models require significant disk space (5GB+). If you encounter "no space left on device":
-   - Clean up unused images/containers: `podman system prune -a` (or `docker system prune -a`).
-   - Clean up unused volumes: `podman volume prune`.
-   - The platform's Dockerfile is optimized to reduce disk usage by using multi-stage-like patterns and `--no-cache` flags.
+5. **Disk Space Management**: The platform can consume 10GB+ of space between local virtual environments and Ollama models.
+   - **Recommendation**: Use a cloud LLM (Google Gemini or OpenRouter) and run `./install.sh --skip-venv` to keep the host footprint minimal.
+   - **Cleanup**: Run `./purge.sh` to remove all containers, images, volumes, and local virtual environments.
+   - **Prune**: If you still encounter "no space left on device":
+     - `podman system prune -a`
+     - `podman volume prune`
 
 ---
 

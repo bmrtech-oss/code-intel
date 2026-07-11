@@ -30,13 +30,21 @@ elif command -v docker >/dev/null 2>&1; then
     docker volume ls -q --filter "name=codeintel" | xargs -r docker volume rm 2>/dev/null || true
 fi
 
-# 4. Remove virtual environment
-if [ -d ".venv" ]; then
-    echo "📦 Removing Python virtual environment (.venv)..."
-    rm -rf .venv
+# 4. Remove virtual environment and caches
+echo "📦 Cleaning up local artifacts..."
+rm -rf .venv
+rm -rf .pytest_cache
+rm -rf .ruff_cache
+rm -rf .mypy_cache
+find . -type d -name "__pycache__" -exec rm -rf {} +
+
+# 5. Clean uv cache
+if command -v uv >/dev/null 2>&1; then
+    echo "🧹 Cleaning uv cache..."
+    uv cache clean
 fi
 
-# 5. Optional system-wide cleanup
+# 6. Optional system-wide cleanup
 read -p "❓ Would you like to perform a full container system prune? (y/N): " -n 1 -r
 echo ""
 if [[ $REPLY =~ ^[Yy]$ ]]; then
