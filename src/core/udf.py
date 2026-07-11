@@ -5,7 +5,7 @@ import httpx
 import logging
 from abc import ABC, abstractmethod
 from ollama import AsyncClient
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 from pydantic import BaseModel
 from ..settings import (
     LLM_PROVIDER, LLM_MODEL, LLM_TEMPERATURE,
