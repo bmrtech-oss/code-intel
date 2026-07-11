@@ -50,9 +50,8 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 Code-Intel is configured via environment variables. See [Configuration Guide](docs/configuration.md) for details.
 
 To use **OpenRouter** (Cloud LLM) instead of local Ollama:
-1. Create a `.env` file (copy from `.env.example`).
-2. Set `LLM_PROVIDER=openrouter` and your `LLM_API_KEY`.
-3. Run `./install.sh --skip-models`.
+- **Interactive**: Simply run `./install.sh` and follow the prompts to select "Remote" and enter your API key.
+- **Manual**: Create a `.env` file (copy from `.env.example`), set `LLM_PROVIDER=openrouter` and your `LLM_API_KEY`. Then run `./install.sh --skip-models`.
 
 ---
 

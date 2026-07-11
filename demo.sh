@@ -20,7 +20,6 @@ show_help() {
     echo ""
     echo "Examples:"
     echo "  ./demo.sh --provider openrouter --api-key sk-or-..."
-    echo "  ./demo.sh --model deepseek/deepseek-chat --api-key ..."
 }
 
 # --- Argument Parsing ---
@@ -53,6 +52,21 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+# If no API key is available, offer to input one to speed up the demo
+if [ -z "$DEMO_API_KEY" ] && [ "$DEMO_PROVIDER" == "ollama" ]; then
+    echo "💡 The demo is currently configured for local Ollama."
+    echo "   Using a cloud LLM (OpenRouter) is much faster and bypasses model downloads."
+    read -p "   Do you have an OpenRouter API key to use? (y/N): " -n 1 -r USE_REMOTE
+    echo ""
+    if [[ $USE_REMOTE =~ ^[Yy]$ ]]; then
+        read -p "   Enter API Key: " DEMO_API_KEY
+        if [ -n "$DEMO_API_KEY" ]; then
+            DEMO_PROVIDER="openrouter"
+            DEMO_MODEL="google/gemini-flash-1.5"
+        fi
+    fi
+fi
 
 # If API key is provided but provider is still default, switch to openrouter
 if [ -n "$DEMO_API_KEY" ] && [ "$DEMO_PROVIDER" == "ollama" ]; then
@@ -97,9 +111,6 @@ uv run code-intel query predict_next_edit --commit demo-v1 --symbol app.Processo
 
 # 6. Autonomic Requirements (Async)
 echo -e "\n📝 Phase 6: Generating Autonomic Requirements..."
-# We pass the settings to the API via headers or it uses environment variables if it's running in the same shell (it's not, usually)
-# However, for a demo, we assume the user might be running the API in a container or separately.
-# If they use the remote provider, they should have configured the API with these env vars.
 JOB_DATA=$(curl -s -X POST "http://localhost:8000/requirements?version=demo-v1")
 JOB_ID=$(echo $JOB_DATA | jq -r '.job_id')
 
@@ -115,7 +126,7 @@ if [ "$JOB_ID" != "null" ] && [ "$JOB_ID" != "" ]; then
         fi
     done
 else
-    echo "⚠️ Requirements job failed to start. (Check if API is running with the correct LLM configuration)"
+    echo "⚠️ Requirements job failed to start."
 fi
 
 # 7. Autonomic Engineering (P2 Dry-Run)
