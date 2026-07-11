@@ -6,6 +6,7 @@ VENV_NAME=".venv"
 SKIP_MODELS=false
 COMPOSE_CMD=""
 ENV_FILE=".env"
+DEBUG=false
 
 # --- Functions ---
 show_help() {
@@ -15,6 +16,7 @@ show_help() {
     echo "  -v, --venv <name>     Specify the Python virtual environment name (default: .venv)"
     echo "  -s, --skip-models     Skip pulling Ollama models"
     echo "  -e, --env-file <path> Path to environment file (default: .env)"
+    echo "  -d, --debug           Enable debug mode (don't detach containers, show full logs)"
     echo "  -h, --help            Show this help message"
     echo ""
     echo "Examples:"
@@ -36,6 +38,10 @@ while [[ $# -gt 0 ]]; do
         -e|--env-file)
             ENV_FILE="$2"
             shift 2
+            ;;
+        -d|--debug)
+            DEBUG=true
+            shift
             ;;
         -h|--help)
             show_help
@@ -70,6 +76,17 @@ else
 fi
 echo "✅ Using $COMPOSE_CMD"
 
+# Verify engine is responsive
+echo "🚢 Checking container engine responsiveness..."
+if ! $COMPOSE_CMD ps >/dev/null 2>&1; then
+    echo "⚠️ Warning: Container engine seems unresponsive. Retrying..."
+    sleep 5
+    if ! $COMPOSE_CMD ps >/dev/null 2>&1; then
+        echo "❌ Error: Container engine ($COMPOSE_CMD) is not responding. Ensure Podman/Docker is running."
+        exit 1
+    fi
+fi
+
 # 2. Setup Python environment
 echo "📦 Syncing Python dependencies (Env: $VENV_NAME)..."
 export UV_PROJECT_ENVIRONMENT="$VENV_NAME"
@@ -77,10 +94,24 @@ uv sync
 
 # 3. Start Infrastructure
 echo "🐳 Starting services (Postgres, Redis, Ollama)..."
+UP_FLAGS="-d --build"
+if [ "$DEBUG" = true ]; then
+    echo "🐞 Debug mode enabled. Showing full logs..."
+    UP_FLAGS="--build"
+fi
+
 # Pass the env file to compose
-if ! $COMPOSE_CMD --env-file "$ENV_FILE" up -d --build; then
+if ! $COMPOSE_CMD --env-file "$ENV_FILE" up $UP_FLAGS; then
     echo "❌ Error: Failed to start containers. Check the logs above."
     exit 1
+fi
+
+# If in debug mode, the script won't proceed to the wait loop because 'up' is blocking.
+# This is intentional to let the user see the logs and then restart normally.
+if [ "$DEBUG" = true ]; then
+    echo ""
+    echo "⚠️ Debug session finished. Restart without -d to complete the setup."
+    exit 0
 fi
 
 # 4. Wait for Postgres and run migrations

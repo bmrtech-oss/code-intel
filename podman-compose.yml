@@ -60,12 +60,9 @@ services:
       - LLM_TEMPERATURE=0.0
 
     depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      ollama:
-        condition: service_started
+      - postgres
+      - redis
+      - ollama
     volumes:
       - ./src:/app/src
       - ./data:/app/data
@@ -83,10 +80,8 @@ services:
       - USE_BITEMPORAL=true
       - OLLAMA_URL=http://ollama:11434
     depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
+      - postgres
+      - redis
     volumes:
       - ./src:/app/src
     command: ["uv", "run", "rq", "worker", "ingestion", "llm"]
@@ -102,10 +97,8 @@ services:
       - REDIS_HOST=redis
       - USE_BITEMPORAL=true
     depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
+      - postgres
+      - redis
     command: ["code-intel-mcp"]
     restart: unless-stopped
 
