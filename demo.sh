@@ -6,7 +6,7 @@ echo "========================================="
 
 # 1. Ingest Sample Repository
 echo "📥 Phase 1: Ingesting Python Example..."
-uv run code-intel analyze --repo-path examples/python --version demo-v1
+uv run code-intel analyze examples/python --version demo-v1
 echo "✅ Ingestion complete."
 
 # 2. Topological Query

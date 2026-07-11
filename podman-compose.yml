@@ -51,11 +51,12 @@ services:
     environment:
       - DATABASE_URL=postgresql+asyncpg://postgres:password@postgres:5432/codeintel
       - REDIS_HOST=redis
+      - USE_BITEMPORAL=true
       - OLLAMA_URL=http://ollama:11434
       # - LLM_MODEL=tinyllama   # instead of phi3:mini
-      # - LLM_MODEL=phi3:mini
+      - LLM_MODEL=phi3:mini
       # - LLM_MODEL=deepseek-coder:1.3b
-      - LLM_MODEL=iodose/nuextract-v1.5:3.8b-q6_K
+      # - LLM_MODEL=iodose/nuextract-v1.5:3.8b-q6_K
       - LLM_TEMPERATURE=0.0
 
     depends_on:
@@ -79,6 +80,7 @@ services:
     environment:
       - DATABASE_URL=postgresql+asyncpg://postgres:password@postgres:5432/codeintel
       - REDIS_HOST=redis
+      - USE_BITEMPORAL=true
       - OLLAMA_URL=http://ollama:11434
     depends_on:
       postgres:

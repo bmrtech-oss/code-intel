@@ -14,18 +14,39 @@ if ! command -v podman-compose >/dev/null 2>&1; then
 fi
 
 # 2. Setup Python environment
-echo "📦 Syncing Python dependencies..."
+VENV_NAME=${1:-".venv"}
+echo "📦 Syncing Python dependencies (Env: $VENV_NAME)..."
+export UV_PROJECT_ENVIRONMENT="$VENV_NAME"
 uv sync
 
 # 3. Start Infrastructure
 echo "🐳 Starting services (Postgres, Redis, Ollama)..."
-$COMPOSE_CMD up -d
+# We use --build to ensure the latest code is used. 
+# If you hit I/O errors, ensure you have enough disk space and your local .venv isn't being copied.
+$COMPOSE_CMD up -d --build
 
 # 4. Wait for Postgres and run migrations
-echo "⏳ Waiting for database to be ready..."
-sleep 10 # Basic wait, could be more robust with a loop
+echo "⏳ Waiting for services to be ready..."
+MAX_RETRIES=60 # Increased timeout for heavy builds
+COUNT=0
+until $COMPOSE_CMD exec -i api python -c "import sqlalchemy; print('API Ready')" > /dev/null 2>&1 || [ $COUNT -eq $MAX_RETRIES ]; do
+  if ! $COMPOSE_CMD ps | grep -q "api.*running"; then
+    echo "   ⚠️ API container not yet running, waiting..."
+  else
+    echo "   Waiting for API dependencies ($COUNT/$MAX_RETRIES)..."
+  fi
+  sleep 5
+  COUNT=$((COUNT + 1))
+done
+
+if [ $COUNT -eq $MAX_RETRIES ]; then
+    echo "❌ Error: API service failed to start in time."
+    $COMPOSE_CMD logs api
+    exit 1
+fi
+
 echo "📂 Running database migrations..."
-$COMPOSE_CMD exec -it api alembic upgrade head
+$COMPOSE_CMD exec -i api alembic upgrade head
 
 # 5. Setup AI Agent Integrations
 echo "🤖 Configuring AI agent integrations..."
@@ -33,7 +54,7 @@ echo "🤖 Configuring AI agent integrations..."
 
 # 6. Initialize local Ollama model
 echo "🧠 Pulling Ollama model (phi3:mini)..."
-$COMPOSE_CMD exec -it ollama ollama pull phi3:mini
+$COMPOSE_CMD exec -i ollama ollama pull phi3:mini
 
 echo ""
 echo "🎉 Code-Intel is now ready for use!"
@@ -43,4 +64,4 @@ echo "Web UI:      http://localhost:5173 (if frontend is running)"
 echo "MCP Server:  Configured for Claude Desktop & Cursor"
 echo ""
 echo "To analyze your first repository:"
-echo "code-intel analyze --repo-path <PATH>"
+echo "uv run --env $VENV_NAME code-intel analyze <PATH>"

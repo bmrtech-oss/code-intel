@@ -40,14 +40,14 @@ def extract_json(text: str):
         if match:
             try:
                 return json.loads(match.group())
-            except:
+            except Exception:
                 pass
         
         # Try json_repair as a last resort
         try:
             from json_repair import repair_json
             return json.loads(repair_json(text))
-        except:
+        except Exception:
             pass
     
     return {"raw": text, "error": "Could not parse JSON"}
@@ -167,6 +167,12 @@ async def query(req: QueryRequest, db: AsyncSession = Depends(get_db)):
             elif req.rule == "impact":
                 result = await adapter.get_transitive_dependencies(version, req.symbol, max_depth=req.depth or 3)
                 return {"result": list(result)}
+            elif req.rule == "get_symbols":
+                result = await adapter.get_symbols(version)
+                return {"result": result}
+            elif req.rule == "query_cross_repo_imports":
+                result = await adapter.get_calls(version, edge_type="IMPORTS_FROM")
+                return {"result": result}
             elif req.rule == "predict_impact":
                 from ..mcp import server as mcp_mod
                 if mcp_mod.impact_predictor:
@@ -196,6 +202,12 @@ async def query(req: QueryRequest, db: AsyncSession = Depends(get_db)):
                     return {"result": {"status": "success" if all(r.get("passed", False) for r in results) else "failure", "test_results": results, "impact": impact}}
                 else:
                     raise HTTPException(status_code=503, detail="Impact predictor not initialized")
+            elif req.rule == "predict_next_edit":
+                from ..mcp import server as mcp_mod
+                from ..analytics.cochange_model import CochangePredictor
+                predictor = CochangePredictor(adapter)
+                predictions = await predictor.predict_next_edits(req.symbol, version)
+                return {"result": {"symbol": req.symbol, "predictions": predictions}}
 
     dataflow = DataflowEngine(storage)
     rules = RuleEngine(storage, dataflow)
