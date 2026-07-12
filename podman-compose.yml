@@ -59,6 +59,7 @@ services:
       - OLLAMA_URL=http://ollama:11434
       - LLM_MODEL=phi3:mini
       - LLM_TEMPERATURE=0.0
+      - PYTHONPATH=/app
 
     depends_on:
       - postgres
@@ -67,7 +68,8 @@ services:
       - ./src:/app/src
       - ./data:/app/data
       - ./prompts:/app/prompts:ro
-    command: ["uv", "run", "python", "-m", "src", "serve", "--host", "0.0.0.0", "--port", "8000"]
+    # Explicitly call the main CLI module
+    command: ["uv", "run", "python", "-m", "src.cli.main", "serve", "--host", "0.0.0.0", "--port", "8000"]
     restart: unless-stopped
 
   worker:
@@ -82,6 +84,7 @@ services:
       - REDIS_HOST=redis
       - USE_BITEMPORAL=true
       - OLLAMA_URL=http://ollama:11434
+      - PYTHONPATH=/app
     depends_on:
       - postgres
       - redis
@@ -102,10 +105,11 @@ services:
       - DATABASE_URL=postgresql+asyncpg://postgres:password@postgres:5432/codeintel
       - REDIS_HOST=redis
       - USE_BITEMPORAL=true
+      - PYTHONPATH=/app
     depends_on:
       - postgres
       - redis
-    command: ["code-intel-mcp"]
+    command: ["uv", "run", "python", "-m", "src.cli.main", "mcp"]
     restart: unless-stopped
 
 volumes:
