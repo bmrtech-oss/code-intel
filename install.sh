@@ -82,8 +82,22 @@ echo -e "${CYAN}🚀 Starting Code-Intel One-Click Installation...${NC}"
 [ ! -f "$ENV_FILE" ] && [ "$ENV_FILE" == ".env" ] && cp .env.example .env
 
 # 1. Mandatory LLM Configuration Prompt
-CURRENT_PROVIDER=$(grep LLM_PROVIDER "$ENV_FILE" 2>/dev/null | cut -d'=' -f2 | tr -d '"' || echo "")
+# Improved detection using anchored grep to avoid comments
+CURRENT_PROVIDER=$(grep "^LLM_PROVIDER=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2 | tr -d '"' || echo "")
+CURRENT_GOOGLE_KEY=$(grep "^GOOGLE_API_KEY=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2 | tr -d '"' || echo "")
+CURRENT_OR_KEY=$(grep "^LLM_API_KEY=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2 | tr -d '"' || echo "")
+
+# If provider is local 'ollama' or not set, or if key is missing for selected cloud provider, prompt.
+SHOULD_PROMPT=false
 if [ -z "$CURRENT_PROVIDER" ] || [ "$CURRENT_PROVIDER" == "ollama" ]; then
+    SHOULD_PROMPT=true
+elif [ "$CURRENT_PROVIDER" == "google" ] && [ -z "$CURRENT_GOOGLE_KEY" ]; then
+    SHOULD_PROMPT=true
+elif [ "$CURRENT_PROVIDER" == "openrouter" ] && [ -z "$CURRENT_OR_KEY" ]; then
+    SHOULD_PROMPT=true
+fi
+
+if [ "$SHOULD_PROMPT" = true ]; then
     echo ""
     echo -e "${CYAN}🤖 LLM Configuration (Mandatory)${NC}"
     echo "----------------------------"
@@ -107,10 +121,10 @@ if [ -z "$CURRENT_PROVIDER" ] || [ "$CURRENT_PROVIDER" == "ollama" ]; then
                 read -p "Enter Model Name (default: $DEFAULT_MODEL): " INPUT_MODEL
                 INPUT_MODEL=${INPUT_MODEL:-$DEFAULT_MODEL}
 
-                sed -i "s|LLM_PROVIDER=.*|LLM_PROVIDER=openrouter|" "$ENV_FILE"
-                sed -i "s|LLM_MODEL=.*|LLM_MODEL=$INPUT_MODEL|" "$ENV_FILE"
-                if grep -q "LLM_API_KEY=" "$ENV_FILE"; then
-                    sed -i "s|.*LLM_API_KEY=.*|LLM_API_KEY=$INPUT_KEY|" "$ENV_FILE"
+                sed -i "s|^LLM_PROVIDER=.*|LLM_PROVIDER=openrouter|" "$ENV_FILE"
+                sed -i "s|^LLM_MODEL=.*|LLM_MODEL=$INPUT_MODEL|" "$ENV_FILE"
+                if grep -q "^LLM_API_KEY=" "$ENV_FILE"; then
+                    sed -i "s|^LLM_API_KEY=.*|LLM_API_KEY=$INPUT_KEY|" "$ENV_FILE"
                 else
                     echo "LLM_API_KEY=$INPUT_KEY" >> "$ENV_FILE"
                 fi
@@ -118,8 +132,8 @@ if [ -z "$CURRENT_PROVIDER" ] || [ "$CURRENT_PROVIDER" == "ollama" ]; then
             fi
             ;;
         3)
-            sed -i "s|LLM_PROVIDER=.*|LLM_PROVIDER=ollama|" "$ENV_FILE"
-            sed -i "s|LLM_MODEL=.*|LLM_MODEL=phi3:mini|" "$ENV_FILE"
+            sed -i "s|^LLM_PROVIDER=.*|LLM_PROVIDER=ollama|" "$ENV_FILE"
+            sed -i "s|^LLM_MODEL=.*|LLM_MODEL=phi3:mini|" "$ENV_FILE"
             ;;
         *) # Default: Google Gemini
             read -p "Enter Google Gemini API Key: " INPUT_KEY
@@ -128,10 +142,10 @@ if [ -z "$CURRENT_PROVIDER" ] || [ "$CURRENT_PROVIDER" == "ollama" ]; then
                 read -p "Enter Model Name (default: $DEFAULT_MODEL): " INPUT_MODEL
                 INPUT_MODEL=${INPUT_MODEL:-$DEFAULT_MODEL}
 
-                sed -i "s|LLM_PROVIDER=.*|LLM_PROVIDER=google|" "$ENV_FILE"
-                sed -i "s|LLM_MODEL=.*|LLM_MODEL=$INPUT_MODEL|" "$ENV_FILE"
-                if grep -q "GOOGLE_API_KEY=" "$ENV_FILE"; then
-                    sed -i "s|.*GOOGLE_API_KEY=.*|GOOGLE_API_KEY=$INPUT_KEY|" "$ENV_FILE"
+                sed -i "s|^LLM_PROVIDER=.*|LLM_PROVIDER=google|" "$ENV_FILE"
+                sed -i "s|^LLM_MODEL=.*|LLM_MODEL=$INPUT_MODEL|" "$ENV_FILE"
+                if grep -q "^GOOGLE_API_KEY=" "$ENV_FILE"; then
+                    sed -i "s|^GOOGLE_API_KEY=.*|GOOGLE_API_KEY=$INPUT_KEY|" "$ENV_FILE"
                 else
                     echo "GOOGLE_API_KEY=$INPUT_KEY" >> "$ENV_FILE"
                 fi
@@ -139,7 +153,7 @@ if [ -z "$CURRENT_PROVIDER" ] || [ "$CURRENT_PROVIDER" == "ollama" ]; then
                 log_success "Configured for Google Gemini ($INPUT_MODEL)."
             else
                 echo "⚠️ No key provided. Falling back to Ollama local defaults."
-                sed -i "s|LLM_PROVIDER=.*|LLM_PROVIDER=ollama|" "$ENV_FILE"
+                sed -i "s|^LLM_PROVIDER=.*|LLM_PROVIDER=ollama|" "$ENV_FILE"
             fi
             ;;
     esac
@@ -167,8 +181,7 @@ check_port 8000 "API" || CONFLICT=true
 check_port 5432 "Postgres" || CONFLICT=true
 check_port 6379 "Redis" || CONFLICT=true
 
-# Only check Ollama port if we are actually using it
-FINAL_PROVIDER=$(grep LLM_PROVIDER "$ENV_FILE" 2>/dev/null | cut -d'=' -f2 | tr -d '"' || echo "ollama")
+FINAL_PROVIDER=$(grep "^LLM_PROVIDER=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2 | tr -d '"' || echo "ollama")
 if [ "$FINAL_PROVIDER" == "ollama" ]; then
     [ "$SKIP_MODELS" = false ] && { check_port 11434 "Ollama" || CONFLICT=true; }
 fi
@@ -227,11 +240,9 @@ log_info "Starting containers..."
 UP_FLAGS="-d --build"
 [ "$DEBUG" = true ] && UP_FLAGS="--build"
 
-# Conditionally enable Ollama profile
 COMPOSE_PROFILES=""
 if [ "$FINAL_PROVIDER" == "ollama" ]; then
     COMPOSE_PROFILES="--profile ollama"
-    log_info "Ollama local provider active. Local model will be used."
 fi
 
 export CODEINTEL_TIER="$PERFORMANCE_TIER"
@@ -263,7 +274,7 @@ $COMPOSE_CMD exec -i api alembic upgrade head
 
 # 8. Model Pull
 if [ "$FINAL_PROVIDER" == "ollama" ] && [ "$SKIP_MODELS" = false ]; then
-    MODEL=$(grep LLM_MODEL "$ENV_FILE" 2>/dev/null | cut -d'=' -f2 | tr -d '"' || echo "phi3:mini")
+    MODEL=$(grep "^LLM_MODEL=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2 | tr -d '"' || echo "phi3:mini")
     log_info "Pulling Ollama model ($MODEL)..."
     $COMPOSE_CMD exec -i ollama ollama pull "$MODEL"
 fi
@@ -302,7 +313,7 @@ case "$NEXT_STEP" in
         REPO_VERSION=${REPO_VERSION:-custom-v1}
         echo -e "\n📥 ${CYAN}Starting analysis...${NC}"
         $COMPOSE_CMD exec -i api code-intel analyze "$REPO_URL" --version "$REPO_VERSION" --branch "$REPO_BRANCH"
-        log_success "Analysis complete!"
+        log_success "Analysis complete! You can now query this repository."
         ;;
     *) log_info "Happy Hacking! Access the UI at http://localhost:5173" ;;
 esac
