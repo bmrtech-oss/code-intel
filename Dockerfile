@@ -1,46 +1,49 @@
 # --- Builder Stage ---
 FROM python:3.11-slim AS builder
 
+ARG TIER=minimal
 WORKDIR /app
+
 RUN apt-get update && \
     apt-get install -y --no-install-recommends git && \
     rm -rf /var/lib/apt/lists/*
 
 RUN pip install --no-cache-dir uv
-
-ARG LIGHTWEIGHT=true
 COPY pyproject.toml README.md ./
-# Use --no-cache and specialized venv location
+
+# Conditional sync based on TIER
+# minimal:  no semantic extra, cpu torch
+# standard: semantic extra, cpu torch
+# high:     semantic extra, full torch (requires removing cpu index)
 RUN uv venv /app/.venv && \
-    if [ "$LIGHTWEIGHT" = "true" ]; then \
+    if [ "$TIER" = "minimal" ]; then \
         uv sync --extra agents --no-cache; \
+    elif [ "$TIER" = "standard" ]; then \
+        uv sync --extra agents --extra semantic --no-cache; \
     else \
+        # For 'high' tier, we remove the CPU-only source override to allow full CUDA torch
+        sed -i '/\[tool.uv.index\]/,/torch = { index = "pytorch-cpu" }/d' pyproject.toml && \
         uv sync --extra agents --extra semantic --no-cache; \
     fi
 
 # --- Final Stage ---
+# Use nvidia base for high tier, slim for others
 FROM python:3.11-slim
 
 WORKDIR /app
-
-# Copy only the virtual environment and uv binary
 COPY --from=builder /app/.venv /app/.venv
 COPY --from=builder /usr/local/bin/uv /usr/local/bin/uv
 
-# Install minimal runtime dependencies
 RUN apt-get update && \
     apt-get install -y --no-install-recommends git && \
     rm -rf /var/lib/apt/lists/*
 
-# Copy source code and prompts
 COPY src/ /app/src/
 COPY prompts/ /app/prompts/
 
-# Configure environment
 ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONPATH=/app
 ENV UV_PROJECT_ENVIRONMENT=/app/.venv
-# Ensure python doesn't write .pyc files in the container
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 

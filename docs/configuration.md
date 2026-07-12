@@ -69,10 +69,11 @@ If you are using Podman on Rocky Linux (or RHEL) and the installation "hangs" or
 
 ### Setup Footprint Comparison
 
-| Mode | Host Space (`.venv`) | Image Space | Key Features |
-| :--- | :--- | :--- | :--- |
-| **Lightweight (Default)** | **~600 MB** | **~800 MB** | Graph, Impact, Dead Code, Gemini/OpenRouter |
-| **Full (`--full`)** | **~6.3 GB** | **~5.5 GB** | All above + **Semantic Search** |
+| Tier | Host Space (`.venv`) | Image Space | Performance | Key Features |
+| :--- | :--- | :--- | :--- | :--- |
+| **Minimal (Default)** | **~600 MB** | **~800 MB** | N/A | Graph, Impact, Dead Code, Requirement Gen |
+| **Standard** | **~6.3 GB** | **~5.5 GB** | Balanced (CPU) | All above + **Semantic Search** |
+| **High** | **~7.5 GB** | **~12 GB** | Fast (GPU/CUDA) | All above + **GPU Accelerated Search** |
 
 ### Recommendations for Minimal Space:
 1. **Use Cloud LLM**: Select Google Gemini or OpenRouter during setup to bypass the **5GB** Ollama model download.

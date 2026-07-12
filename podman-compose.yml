@@ -46,7 +46,7 @@ services:
     build:
       context: .
       args:
-        LIGHTWEIGHT: "${CODEINTEL_LIGHTWEIGHT:-true}"
+        TIER: "${CODEINTEL_TIER:-minimal}"
     image: codeintel-api:latest
     container_name: codeintel-api
     ports:
@@ -77,7 +77,7 @@ services:
     build:
       context: .
       args:
-        LIGHTWEIGHT: "${CODEINTEL_LIGHTWEIGHT:-true}"
+        TIER: "${CODEINTEL_TIER:-minimal}"
     image: codeintel-worker:latest
     container_name: codeintel-worker
     environment:
@@ -98,7 +98,7 @@ services:
     build:
       context: .
       args:
-        LIGHTWEIGHT: "${CODEINTEL_LIGHTWEIGHT:-true}"
+        TIER: "${CODEINTEL_TIER:-minimal}"
     image: codeintel-mcp:latest
     container_name: codeintel-mcp
     environment:
