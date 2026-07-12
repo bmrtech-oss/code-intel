@@ -35,7 +35,7 @@ show_help() {
     echo "  -e, --env-file <path> Path to environment file (default: .env)"
     echo "  -d, --debug           Enable debug mode (show full logs)"
     echo "  -p, --purge           Run cleanup (purge.sh) before starting"
-    echo "  --skip-venv           Skip creating local venv"
+    echo "  --skip-venv           Skip creating local venv (recommended for Podman/Docker only)"
     echo "  --tier <tier>         Set performance tier (minimal|standard|high)"
     echo "  -h, --help            Show this help message"
 }
@@ -87,7 +87,7 @@ if [ -z "$CURRENT_PROVIDER" ] || [ "$CURRENT_PROVIDER" == "ollama" ]; then
     echo ""
     echo -e "${CYAN}🤖 LLM Configuration (Mandatory)${NC}"
     echo "----------------------------"
-    echo "To save space and ensure high performance, a cloud provider is RECOMMENDED."
+    echo "To save disk space and ensure high performance, a cloud provider is RECOMMENDED."
     echo "1) Google Gemini (Remote) [DEFAULT - FASTEST/SMALLEST FOOTPRINT]"
     echo "2) OpenRouter (Remote)"
     echo "3) Ollama (Local - ⚠️ Requires ~5GB extra disk space and slow model download)"
@@ -169,7 +169,7 @@ check_port 6379 "Redis" || CONFLICT=true
 [ "$SKIP_MODELS" = false ] && { check_port 11434 "Ollama" || CONFLICT=true; }
 
 if [ "$CONFLICT" = true ]; then
-    log_error "Port conflicts detected. Please stop the conflicting services or run './purge.sh'."
+    log_error "Port conflicts detected. Stop conflicting services or run './purge.sh'."
     exit 1
 fi
 
@@ -187,8 +187,7 @@ elif command -v docker-compose >/dev/null 2>&1; then
 elif docker compose version >/dev/null 2>&1; then
     COMPOSE_CMD="docker compose"
 else
-    echo "❌ docker-compose or podman-compose is required."
-    exit 1
+    log_error "docker-compose or podman-compose is required."; exit 1
 fi
 echo "✅ Using $COMPOSE_CMD"
 
@@ -200,8 +199,7 @@ if ! timeout 15s $COMPOSE_CMD ps >/dev/null 2>&1; then
     fi
     sleep 5
     if ! timeout 15s $COMPOSE_CMD ps >/dev/null 2>&1; then
-        echo "❌ Error: Container engine is still not responding. Run: podman system reset"
-        exit 1
+        log_error "Container engine is still not responding. Run: podman system reset"; exit 1
     fi
 fi
 
@@ -209,9 +207,11 @@ fi
 if [ "$SKIP_VENV" = false ]; then
     log_info "Syncing host environment..."
     export UV_PROJECT_ENVIRONMENT="$VENV_NAME"
-    if [ "$LIGHTWEIGHT" = true ]; then
+    if [ "$PERFORMANCE_TIER" == "minimal" ]; then
         uv sync --extra agents --no-cache
     else
+        # We only sync 'semantic' extra on the host if specifically requested,
+        # as it often triggers heavy compilation (like the llama-cpp-python issue).
         uv sync --extra agents --extra semantic --no-cache
     fi
 else
@@ -282,9 +282,7 @@ echo ""
 if [ -t 0 ]; then read -p "Selection (1/2/3): " -n 1 -r NEXT_STEP; echo ""; else read -r NEXT_STEP; fi
 
 case "$NEXT_STEP" in
-    1)
-        ./demo.sh
-        ;;
+    1) ./demo.sh ;;
     2)
         echo ""
         read -p "Enter Git Repository URL: " REPO_URL
@@ -292,15 +290,9 @@ case "$NEXT_STEP" in
         REPO_BRANCH=${REPO_BRANCH:-main}
         read -p "Enter Version Name (default: custom-v1): " REPO_VERSION
         REPO_VERSION=${REPO_VERSION:-custom-v1}
-
         echo -e "\n📥 ${CYAN}Starting analysis...${NC}"
-        # Use the container to perform analysis so we don't need host setup
         $COMPOSE_CMD exec -i api code-intel analyze "$REPO_URL" --version "$REPO_VERSION" --branch "$REPO_BRANCH"
-
-        log_success "Analysis complete! You can now query this repository."
-        echo -e "Example query: ${YELLOW}curl http://localhost:8000/query -d '{\"rule\": \"dead_code\", \"commit_sha\": \"$REPO_VERSION\"}'${NC}"
+        log_success "Analysis complete!"
         ;;
-    *)
-        log_info "Happy Hacking! Access the UI at http://localhost:5173"
-        ;;
+    *) log_info "Happy Hacking! Access the UI at http://localhost:5173" ;;
 esac

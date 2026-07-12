@@ -44,8 +44,10 @@ code-intel-mcp = "src.mcp.server:run_mcp"
 
 [project.optional-dependencies]
 # Semantic search depends on Torch and Faiss (Heavy: ~2.5GB with CPU torch)
+# We use 'txtai' instead of 'txtai[pipeline]' to avoid heavy C++ build dependencies like llama-cpp-python.
 semantic = [
-    "txtai[pipeline]>=9.11.0",
+    "txtai>=9.11.0",
+    "faiss-cpu>=1.14.3",
 ]
 # Agents and Google Gemini support (Medium: ~500MB)
 agents = [
