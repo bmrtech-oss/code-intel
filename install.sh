@@ -35,7 +35,7 @@ show_help() {
     echo "  -e, --env-file <path> Path to environment file (default: .env)"
     echo "  -d, --debug           Enable debug mode (show full logs)"
     echo "  -p, --purge           Run cleanup (purge.sh) before starting"
-    echo "  --skip-venv           Skip creating local venv (recommended for Podman/Docker only)"
+    echo "  --skip-venv           Skip creating local venv"
     echo "  --tier <tier>         Set performance tier (minimal|standard|high)"
     echo "  -h, --help            Show this help message"
 }
@@ -166,7 +166,12 @@ CONFLICT=false
 check_port 8000 "API" || CONFLICT=true
 check_port 5432 "Postgres" || CONFLICT=true
 check_port 6379 "Redis" || CONFLICT=true
-[ "$SKIP_MODELS" = false ] && { check_port 11434 "Ollama" || CONFLICT=true; }
+
+# Only check Ollama port if we are actually using it
+FINAL_PROVIDER=$(grep LLM_PROVIDER "$ENV_FILE" 2>/dev/null | cut -d'=' -f2 | tr -d '"' || echo "ollama")
+if [ "$FINAL_PROVIDER" == "ollama" ]; then
+    [ "$SKIP_MODELS" = false ] && { check_port 11434 "Ollama" || CONFLICT=true; }
+fi
 
 if [ "$CONFLICT" = true ]; then
     log_error "Port conflicts detected. Stop conflicting services or run './purge.sh'."
@@ -199,7 +204,8 @@ if ! timeout 15s $COMPOSE_CMD ps >/dev/null 2>&1; then
     fi
     sleep 5
     if ! timeout 15s $COMPOSE_CMD ps >/dev/null 2>&1; then
-        log_error "Container engine is still not responding. Run: podman system reset"; exit 1
+        echo "❌ Error: Container engine is still not responding. Run: podman system reset"
+        exit 1
     fi
 fi
 
@@ -210,8 +216,6 @@ if [ "$SKIP_VENV" = false ]; then
     if [ "$PERFORMANCE_TIER" == "minimal" ]; then
         uv sync --extra agents --no-cache
     else
-        # We only sync 'semantic' extra on the host if specifically requested,
-        # as it often triggers heavy compilation (like the llama-cpp-python issue).
         uv sync --extra agents --extra semantic --no-cache
     fi
 else
@@ -223,8 +227,15 @@ log_info "Starting containers..."
 UP_FLAGS="-d --build"
 [ "$DEBUG" = true ] && UP_FLAGS="--build"
 
+# Conditionally enable Ollama profile
+COMPOSE_PROFILES=""
+if [ "$FINAL_PROVIDER" == "ollama" ]; then
+    COMPOSE_PROFILES="--profile ollama"
+    log_info "Ollama local provider active. Local model will be used."
+fi
+
 export CODEINTEL_TIER="$PERFORMANCE_TIER"
-if ! $COMPOSE_CMD --env-file "$ENV_FILE" up $UP_FLAGS; then
+if ! $COMPOSE_CMD $COMPOSE_PROFILES --env-file "$ENV_FILE" up $UP_FLAGS; then
     log_error "Failed to start containers. Check disk space or logs."; exit 1
 fi
 
@@ -251,7 +262,6 @@ $COMPOSE_CMD exec -i api alembic upgrade head
 ./scripts/setup-agent.sh
 
 # 8. Model Pull
-FINAL_PROVIDER=$(grep LLM_PROVIDER "$ENV_FILE" 2>/dev/null | cut -d'=' -f2 | tr -d '"' || echo "ollama")
 if [ "$FINAL_PROVIDER" == "ollama" ] && [ "$SKIP_MODELS" = false ]; then
     MODEL=$(grep LLM_MODEL "$ENV_FILE" 2>/dev/null | cut -d'=' -f2 | tr -d '"' || echo "phi3:mini")
     log_info "Pulling Ollama model ($MODEL)..."

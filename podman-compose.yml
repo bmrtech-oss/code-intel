@@ -32,6 +32,7 @@ services:
       retries: 5
 
   ollama:
+    profiles: ["ollama"]
     image: docker.io/ollama/ollama:latest
     container_name: codeintel-ollama
     ports:
@@ -56,20 +57,16 @@ services:
       - REDIS_HOST=redis
       - USE_BITEMPORAL=true
       - OLLAMA_URL=http://ollama:11434
-      # - LLM_MODEL=tinyllama   # instead of phi3:mini
       - LLM_MODEL=phi3:mini
-      # - LLM_MODEL=deepseek-coder:1.3b
-      # - LLM_MODEL=iodose/nuextract-v1.5:3.8b-q6_K
       - LLM_TEMPERATURE=0.0
 
     depends_on:
       - postgres
       - redis
-      - ollama
     volumes:
       - ./src:/app/src
       - ./data:/app/data
-      - ./prompts:/app/prompts:ro   # read-only
+      - ./prompts:/app/prompts:ro
     command: ["uv", "run", "python", "-m", "src", "serve", "--host", "0.0.0.0", "--port", "8000"]
     restart: unless-stopped
 
