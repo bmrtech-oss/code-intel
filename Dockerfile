@@ -8,9 +8,15 @@ RUN apt-get update && \
 
 RUN pip install --no-cache-dir uv
 
+ARG LIGHTWEIGHT=true
 COPY pyproject.toml README.md ./
 # Use --no-cache and specialized venv location
-RUN uv venv /app/.venv && uv sync --extra agents --no-cache
+RUN uv venv /app/.venv && \
+    if [ "$LIGHTWEIGHT" = "true" ]; then \
+        uv sync --extra agents --no-cache; \
+    else \
+        uv sync --extra agents --extra semantic --no-cache; \
+    fi
 
 # --- Final Stage ---
 FROM python:3.11-slim

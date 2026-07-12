@@ -65,12 +65,35 @@ If you are using Podman on Rocky Linux (or RHEL) and the installation "hangs" or
    ```bash
    podman system reset
    ```
-5. **Disk Space Management**: The platform can consume 10GB+ of space between local virtual environments and Ollama models.
-   - **Recommendation**: Use a cloud LLM (Google Gemini or OpenRouter) and run `./install.sh --skip-venv` to keep the host footprint minimal.
-   - **Cleanup**: Run `./purge.sh` to remove all containers, images, volumes, and local virtual environments.
-   - **Prune**: If you still encounter "no space left on device":
-     - `podman system prune -a`
-     - `podman volume prune`
+5. **Disk Space Management**: The platform footprint varies significantly based on the selected mode.
+
+### Setup Footprint Comparison
+
+| Mode | Host Space (`.venv`) | Image Space | Key Features |
+| :--- | :--- | :--- | :--- |
+| **Lightweight (Default)** | **~600 MB** | **~800 MB** | Graph, Impact, Dead Code, Gemini/OpenRouter |
+| **Full (`--full`)** | **~6.3 GB** | **~5.5 GB** | All above + **Semantic Search** |
+
+### Recommendations for Minimal Space:
+1. **Use Cloud LLM**: Select Google Gemini or OpenRouter during setup to bypass the **5GB** Ollama model download.
+2. **Skip Local Venv**: Use `./install.sh --skip-venv` to avoid the local footprint entirely; the app will run inside containers.
+3. **Lightweight Mode**: Stay with the default (don't use `--full`) if you don't need semantic (natural language) search.
+
+### Cleanup & Recovery:
+- **Reset**: Run `./purge.sh` to completely remove all Code-Intel containers, images, and local caches.
+- **Prune**: If you see "no space left on device":
+  - `podman system prune -a`
+  - `podman volume prune`
+
+### Production & Performance: Switching to CUDA
+
+By default, the platform uses **CPU-only** libraries to minimize disk usage (~600MB vs ~6GB). For large-scale production deployments where high-speed semantic search is required:
+
+1. **Impact**: CPU-only mode is efficient for smaller repositories but will be slower for initial indexing of very large codebases (>1M lines).
+2. **Switching to CUDA**:
+   - In `pyproject.toml`, remove the `[[tool.uv.index]]` and `[tool.uv.sources]` sections related to `pytorch-cpu`.
+   - Update `Dockerfile` to use a CUDA-enabled base image (e.g., `nvidia/cuda:12.1.0-base-ubuntu22.04`).
+   - Run `uv sync --extra semantic` to pull the full GPU-enabled dependencies.
 
 ---
 

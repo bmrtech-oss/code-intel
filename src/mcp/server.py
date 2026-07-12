@@ -1,7 +1,8 @@
 import asyncio
 import json
 import os
-from typing import Optional
+import logging
+from typing import Optional, Any
 
 import mcp.server.stdio
 import mcp.types as types
@@ -16,14 +17,6 @@ from ..core.rules import RuleEngine
 from ..core.workspace import WorkspaceManager
 from ..core.udf import LLMUDF
 from ..settings import USE_BITEMPORAL
-from ..storage.bitemporal_adapter import BiTemporalAdapter
-from ..storage.graph_engine import SimpleGraphEngine
-from ..cache.memory_cache import MemoryCache
-from ..cache.cdc_listener import CDCListener
-from ..cache.cache_bootstrap import CacheBootstrap
-from ..semantic.search import SemanticSearch
-from ..analytics.predictor import ImpactPredictor
-from ..analytics.cochange_model import CochangePredictor
 
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://postgres:password@postgres:5432/codeintel")
 engine = create_async_engine(DATABASE_URL)
@@ -31,15 +24,23 @@ AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=F
 
 server = Server("code-intel-mcp")
 workspace_manager = WorkspaceManager()
+logger = logging.getLogger(__name__)
 
 # Global topological storage stack
-adapter: Optional[BiTemporalAdapter] = None
-semantic_search_engine: Optional[SemanticSearch] = None
-impact_predictor: Optional[ImpactPredictor] = None
+adapter: Optional[Any] = None
+semantic_search_engine: Optional[Any] = None
+impact_predictor: Optional[Any] = None
 
 async def init_topological_stack():
     global adapter, semantic_search_engine, impact_predictor
     if USE_BITEMPORAL and adapter is None:
+        from ..storage.bitemporal_adapter import BiTemporalAdapter
+        from ..storage.graph_engine import SimpleGraphEngine
+        from ..cache.memory_cache import MemoryCache
+        from ..cache.cdc_listener import CDCListener
+        from ..cache.cache_bootstrap import CacheBootstrap
+        from ..analytics.predictor import ImpactPredictor
+
         engine_client = SimpleGraphEngine()
         memory_cache = MemoryCache()
         
@@ -50,8 +51,13 @@ async def init_topological_stack():
         await listener.start()
         
         adapter = BiTemporalAdapter(engine_client, memory_cache)
-        semantic_search_engine = SemanticSearch()
         impact_predictor = ImpactPredictor(adapter)
+
+        try:
+            from ..semantic.search import SemanticSearch
+            semantic_search_engine = SemanticSearch()
+        except ImportError:
+            logger.warning("Semantic Search dependencies not found. Skipping semantic engine initialization.")
 
 TOOLS = [
     types.Tool(
@@ -257,9 +263,8 @@ async def handle_call_tool(name: str, arguments: dict) -> list[types.TextContent
                 result = await semantic_search_engine.search(query_text, limit)
                 return [types.TextContent(type="text", text=json.dumps(result, indent=2))]
             else:
-                dummy_vector = [0.1] * 384 
-                result = await storage.semantic_search(dummy_vector, version, limit)
-                return [types.TextContent(type="text", text=json.dumps(result, indent=2))]
+                # Fallback or error
+                return [types.TextContent(type="text", text="Error: Semantic search is not available in Lightweight mode.")]
 
         elif name == "get_workspace_info":
             workspace_id = arguments.get("workspace_id")
@@ -281,40 +286,24 @@ async def handle_call_tool(name: str, arguments: dict) -> list[types.TextContent
             if not impact_predictor:
                 return [types.TextContent(type="text", text="Error: Impact predictor not initialized.")]
             
-            # 1. Get blast radius and affected tests
             impact = await impact_predictor.predict_blast_radius(symbol, version)
             test_files = impact.get("affected_tests", [])
             
             if not test_files:
                 return [types.TextContent(type="text", text=json.dumps({
                     "status": "warning",
-                    "message": "No relevant tests found for this blast radius.",
+                    "message": "No relevant tests found.",
                     "impact": impact
                 }, indent=2))]
 
-            # 2. Execute tests
             import subprocess
             results = []
             for test_file in test_files:
                 try:
-                    # Assuming pytest is used
-                    process = subprocess.run(
-                        ["uv", "run", "pytest", test_file],
-                        capture_output=True,
-                        text=True,
-                        timeout=60
-                    )
-                    results.append({
-                        "file": test_file,
-                        "passed": process.returncode == 0,
-                        "stdout": process.stdout[-500:], # last 500 chars
-                        "stderr": process.stderr[-500:]
-                    })
+                    process = subprocess.run(["uv", "run", "pytest", test_file], capture_output=True, text=True, timeout=60)
+                    results.append({"file": test_file, "passed": process.returncode == 0, "stdout": process.stdout[-500:], "stderr": process.stderr[-500:]})
                 except Exception as e:
-                    results.append({
-                        "file": test_file,
-                        "error": str(e)
-                    })
+                    results.append({"file": test_file, "error": str(e)})
 
             return [types.TextContent(type="text", text=json.dumps({
                 "status": "success" if all(r.get("passed", False) for r in results) else "failure",
@@ -328,6 +317,7 @@ async def handle_call_tool(name: str, arguments: dict) -> list[types.TextContent
             if not adapter:
                  return [types.TextContent(type="text", text="Error: Adapter not initialized.")]
             
+            from ..analytics.cochange_model import CochangePredictor
             predictor = CochangePredictor(adapter)
             predictions = await predictor.predict_next_edits(symbol, version, threshold)
             return [types.TextContent(type="text", text=json.dumps({

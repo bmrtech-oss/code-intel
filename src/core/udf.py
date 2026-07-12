@@ -5,7 +5,7 @@ import httpx
 import logging
 from abc import ABC, abstractmethod
 from ollama import AsyncClient
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Tuple
 from pydantic import BaseModel
 from ..settings import (
     LLM_PROVIDER, LLM_MODEL, LLM_TEMPERATURE,
@@ -190,7 +190,7 @@ class LLMUDF:
             }
         }
 
-    def validate_artifact(self, artifact: Dict[str, Any], symbols: List[Dict], calls: List[Dict]) -> (bool, float):
+    def validate_artifact(self, artifact: Dict[str, Any], symbols: List[Dict], calls: List[Dict]) -> Tuple[bool, float]:
         if not isinstance(artifact, dict) or "tasks" not in artifact:
             return True, 1.0
             

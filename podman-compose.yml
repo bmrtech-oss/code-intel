@@ -43,7 +43,10 @@ services:
     restart: unless-stopped
 
   api:
-    build: .
+    build:
+      context: .
+      args:
+        LIGHTWEIGHT: "${CODEINTEL_LIGHTWEIGHT:-true}"
     image: codeintel-api:latest
     container_name: codeintel-api
     ports:
@@ -71,7 +74,10 @@ services:
     restart: unless-stopped
 
   worker:
-    build: .
+    build:
+      context: .
+      args:
+        LIGHTWEIGHT: "${CODEINTEL_LIGHTWEIGHT:-true}"
     image: codeintel-worker:latest
     container_name: codeintel-worker
     environment:
@@ -89,7 +95,10 @@ services:
 
   mcp-server:
     profiles: ["mcp"]
-    build: .
+    build:
+      context: .
+      args:
+        LIGHTWEIGHT: "${CODEINTEL_LIGHTWEIGHT:-true}"
     image: codeintel-mcp:latest
     container_name: codeintel-mcp
     environment:

@@ -15,7 +15,7 @@ show_help() {
     echo "Options:"
     echo "  --provider <name>     LLM Provider (ollama|openrouter|google) (default: $DEMO_PROVIDER)"
     echo "  --model <name>        LLM Model (default: $DEMO_MODEL)"
-    echo "  --api-key <key>       API Key for remote provider"
+    echo "  --api-key <key>       API Key for OpenRouter"
     echo "  --google-key <key>    API Key for Google Gemini"
     echo "  --base-url <url>      Base URL for remote provider"
     echo "  -h, --help            Show this help message"
@@ -68,19 +68,29 @@ if [ -z "$DEMO_API_KEY" ] && [ -z "$DEMO_GOOGLE_KEY" ] && [ "$DEMO_PROVIDER" == 
     echo "   1) OpenRouter"
     echo "   2) Google Gemini"
     echo "   3) Skip (use local Ollama)"
-    read -p "   Selection (1/2/3): " -n 1 -r LLM_CHOICE
-    echo ""
+
+    if [ -t 0 ]; then
+        read -p "   Selection (1/2/3): " -n 1 -r LLM_CHOICE
+        echo ""
+    else
+        read -r LLM_CHOICE
+    fi
+
     if [[ "$LLM_CHOICE" == "1" ]]; then
         read -p "   Enter OpenRouter API Key: " DEMO_API_KEY
         if [ -n "$DEMO_API_KEY" ]; then
             DEMO_PROVIDER="openrouter"
-            DEMO_MODEL="google/gemini-flash-1.5"
+            DEFAULT_MODEL="google/gemini-flash-1.5"
+            read -p "   Enter Model Name (default: $DEFAULT_MODEL): " INPUT_MODEL
+            DEMO_MODEL=${INPUT_MODEL:-$DEFAULT_MODEL}
         fi
     elif [[ "$LLM_CHOICE" == "2" ]]; then
         read -p "   Enter Google API Key: " DEMO_GOOGLE_KEY
         if [ -n "$DEMO_GOOGLE_KEY" ]; then
             DEMO_PROVIDER="google"
-            DEMO_MODEL="gemini-1.5-flash"
+            DEFAULT_MODEL="gemini-1.5-flash"
+            read -p "   Enter Model Name (default: $DEFAULT_MODEL): " INPUT_MODEL
+            DEMO_MODEL=${INPUT_MODEL:-$DEFAULT_MODEL}
         fi
     fi
 fi
