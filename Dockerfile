@@ -10,6 +10,7 @@ RUN apt-get update && \
 
 RUN pip install --no-cache-dir uv
 COPY pyproject.toml README.md uv.lock ./
+COPY src/ /app/src/
 
 # Conditional sync based on TIER
 RUN uv venv /app/.venv && \
@@ -49,5 +50,5 @@ ENV UV_PROJECT_ENVIRONMENT=/app/.venv
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
-# Use explicit module path to avoid ambiguity
-CMD ["uv", "run", "python", "-m", "src.cli.main", "serve"]
+# Use the registered console script for reliability
+CMD ["code-intel", "serve"]

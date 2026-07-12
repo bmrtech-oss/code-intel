@@ -69,7 +69,7 @@ services:
       - ./data:/app/data
       - ./prompts:/app/prompts:ro
     # Explicitly call the main CLI module
-    command: ["uv", "run", "python", "-m", "src.cli.main", "serve", "--host", "0.0.0.0", "--port", "8000"]
+    command: ["code-intel", "serve", "--host", "0.0.0.0", "--port", "8000"]
     restart: unless-stopped
 
   worker:
@@ -90,7 +90,8 @@ services:
       - redis
     volumes:
       - ./src:/app/src
-    command: ["uv", "run", "rq", "worker", "ingestion", "llm"]
+    # Use rq directly as it is installed in the venv
+    command: ["rq", "worker", "ingestion", "llm"]
     restart: unless-stopped
 
   mcp-server:
@@ -109,7 +110,7 @@ services:
     depends_on:
       - postgres
       - redis
-    command: ["uv", "run", "python", "-m", "src.cli.main", "mcp"]
+    command: ["code-intel", "mcp"]
     restart: unless-stopped
 
 volumes:
