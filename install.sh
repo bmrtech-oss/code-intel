@@ -81,13 +81,19 @@ echo -e "${CYAN}🚀 Starting Code-Intel One-Click Installation...${NC}"
 # 0. Initialize .env
 [ ! -f "$ENV_FILE" ] && [ "$ENV_FILE" == ".env" ] && cp .env.example .env
 
-# 1. Mandatory LLM Configuration Prompt
-# Improved detection using anchored grep to avoid comments
+# 1. Package Structure Fix
+log_info "Verifying package structure..."
+touch src/lang/__init__.py
+touch src/storage/__init__.py
+touch src/cache/__init__.py
+touch src/analytics/__init__.py
+touch src/semantic/__init__.py
+
+# 2. Mandatory LLM Configuration Prompt
 CURRENT_PROVIDER=$(grep "^LLM_PROVIDER=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2 | tr -d '"' || echo "")
 CURRENT_GOOGLE_KEY=$(grep "^GOOGLE_API_KEY=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2 | tr -d '"' || echo "")
 CURRENT_OR_KEY=$(grep "^LLM_API_KEY=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2 | tr -d '"' || echo "")
 
-# If provider is local 'ollama' or not set, or if key is missing for selected cloud provider, prompt.
 SHOULD_PROMPT=false
 if [ -z "$CURRENT_PROVIDER" ] || [ "$CURRENT_PROVIDER" == "ollama" ]; then
     SHOULD_PROMPT=true
@@ -159,7 +165,7 @@ if [ "$SHOULD_PROMPT" = true ]; then
     esac
 fi
 
-# 2. Performance Tier Selection
+# 3. Performance Tier Selection
 echo ""
 echo -e "${CYAN}⚡ Performance & Feature Tier${NC}"
 echo "--------------------------"
@@ -174,7 +180,7 @@ case "$TIER_CHOICE" in
     *) PERFORMANCE_TIER="minimal" ;;
 esac
 
-# 3. Port Conflict Check
+# 4. Port Conflict Check
 log_info "Checking for port conflicts..."
 CONFLICT=false
 check_port 8000 "API" || CONFLICT=true
@@ -191,7 +197,7 @@ if [ "$CONFLICT" = true ]; then
     exit 1
 fi
 
-# 4. Check prerequisites
+# 5. Check prerequisites
 log_info "Checking prerequisites..."
 if ! command -v uv >/dev/null 2>&1; then
     echo "❌ uv is required. Install it via 'curl -LsSf https://astral.sh/uv/install.sh | sh'"
@@ -222,7 +228,7 @@ if ! timeout 15s $COMPOSE_CMD ps >/dev/null 2>&1; then
     fi
 fi
 
-# 5. Setup Python environment
+# 6. Setup Python environment
 if [ "$SKIP_VENV" = false ]; then
     log_info "Syncing host environment..."
     export UV_PROJECT_ENVIRONMENT="$VENV_NAME"
@@ -235,7 +241,7 @@ else
     log_info "Skipping local virtual environment creation."
 fi
 
-# 6. Start Infrastructure
+# 7. Start Infrastructure
 log_info "Starting containers..."
 UP_FLAGS="-d --build"
 [ "$DEBUG" = true ] && UP_FLAGS="--build"
@@ -252,7 +258,7 @@ fi
 
 [ "$DEBUG" = true ] && exit 0
 
-# 7. Wait for API
+# 8. Wait for API
 echo ""
 log_info "Waiting for services to initialize..."
 MAX_RETRIES=60; COUNT=0
@@ -267,12 +273,17 @@ until timeout 10s $COMPOSE_CMD exec -i api python -c "import sqlalchemy; print('
 done
 echo ""
 
-if [ $COUNT -eq $MAX_RETRIES ]; then log_error "API service failed to start."; exit 1; fi
+if [ $COUNT -eq $MAX_RETRIES ]; then
+    log_error "API service failed to start."
+    log_info "Last 20 lines of API logs:"
+    $COMPOSE_CMD logs api | tail -n 20
+    exit 1
+fi
 
 $COMPOSE_CMD exec -i api alembic upgrade head
 ./scripts/setup-agent.sh
 
-# 8. Model Pull
+# 9. Model Pull
 if [ "$FINAL_PROVIDER" == "ollama" ] && [ "$SKIP_MODELS" = false ]; then
     MODEL=$(grep "^LLM_MODEL=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2 | tr -d '"' || echo "phi3:mini")
     log_info "Pulling Ollama model ($MODEL)..."

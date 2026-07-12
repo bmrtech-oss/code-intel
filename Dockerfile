@@ -9,7 +9,7 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 RUN pip install --no-cache-dir uv
-COPY pyproject.toml README.md ./
+COPY pyproject.toml README.md uv.lock ./
 
 # Conditional sync based on TIER
 RUN uv venv /app/.venv && \
@@ -18,6 +18,7 @@ RUN uv venv /app/.venv && \
     elif [ "$TIER" = "standard" ]; then \
         uv sync --extra agents --extra semantic --no-cache; \
     else \
+        # Remove CPU-only source override for high tier
         sed -i '/\[tool.uv.index\]/,/torch = { index = "pytorch-cpu" }/d' pyproject.toml && \
         uv sync --extra agents --extra semantic --no-cache; \
     fi
@@ -26,13 +27,11 @@ RUN uv venv /app/.venv && \
 FROM python:3.11-slim
 
 WORKDIR /app
-
-# Copy virtual env and uv
 COPY --from=builder /app/.venv /app/.venv
 COPY --from=builder /usr/local/bin/uv /usr/local/bin/uv
 
 # Copy project metadata (needed for uv run)
-COPY pyproject.toml README.md ./
+COPY pyproject.toml README.md uv.lock ./
 
 # Install runtime dependencies
 RUN apt-get update && \
