@@ -1,129 +1,68 @@
 # Installation and Setup Guide
 
-This guide walks through a complete local setup of Code-Intel, starting from prerequisites and ending with a small sample repository that can be indexed, queried, and used to generate requirements.
+This guide walks through the installation of Code-Intel using our **Interactive Setup Wizard**.
 
-## 🚀 Quick Start (One-Click)
+---
 
-The easiest way to get started is using the provided installation script:
+## 🚀 One-Click Installation (Recommended)
+
+The easiest way to get started is to run the installer and follow the on-screen prompts:
 
 ```bash
 ./install.sh
 ```
 
-This script automates:
-- Dependency syncing via `uv`.
-- Infrastructure startup (PostgreSQL, Redis, Ollama).
-- Database migrations.
-- Ollama model initialization.
+### What happens during installation?
 
-For advanced options (skipping models, custom venv), run `./install.sh --help`.
+1. **LLM Configuration**: The wizard will ask for an LLM provider.
+   - **Google Gemini** (Recommended): Fastest setup. Just paste your API key.
+   - **OpenRouter**: Great for using Claude or other specific models.
+   - **Local Ollama**: For users who want 100% privacy and have 5GB+ of disk space.
+
+2. **Performance Tier**: You will choose a "Size vs. Features" tier.
+   - **Minimal** (Default): Fast, small (~800MB), includes all core topological features.
+   - **Standard**: Adds Semantic Search using your CPU (~5.5GB).
+   - **High**: Adds Nvidia GPU acceleration for massive repositories (~12GB).
+
+3. **Dependency Sync**: The script installs Python dependencies via `uv`.
+4. **Services**: Starts Postgres, Redis, and (optionally) Ollama containers.
+5. **Migrations**: Automatically sets up the database schema.
 
 ---
 
-## 1. Prerequisites
+## 💾 Minimizing Disk Usage
 
-### Supported environments
-- Ubuntu 22.04+, Debian 12+, or WSL2 on Windows 10/11
-- Python 3.11+
-- Podman or Docker-compatible runtime (including Docker Compose V2 plugin)
-- Git
-
-### Install system packages
-
-On Ubuntu/Debian:
+If you have limited disk space, use the following combination:
 
 ```bash
-sudo apt update
-sudo apt install -y git python3.11 python3.11-venv podman podman-compose
+./install.sh --skip-venv
 ```
 
-### Install uv
-
-```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
-```
+- **Interactive Choices**: Select **Google Gemini** and the **Minimal** tier.
+- **Benefit**: This keeps your host machine clean and uses less than 1GB of total space for containers.
 
 ---
 
-## 2. Configuration
+## 🎬 Verifying the Setup
 
-Code-Intel is configured via environment variables. See [Configuration Guide](docs/configuration.md) for details.
-
-To use **Cloud LLMs** (Google Gemini or OpenRouter) instead of local Ollama:
-- **Interactive**: Run `./install.sh`. You will be prompted to select a provider. Google Gemini is the recommended default.
-- **Manual**: Create a `.env` file, set `LLM_PROVIDER` and your API key. Then run `./install.sh --skip-models`.
-
----
-
-## 🧹 Cleanup & Reset
-
-If an installation fails or you want to start fresh:
-
-```bash
-./purge.sh
-```
-This script stops all containers, removes images and volumes, and deletes the local `.venv`.
-
----
-
-## 3. Running the Strategic Demo
-
-To verify everything is working correctly, run the strategic demo:
+After installation, run the strategic demo to ensure everything is working:
 
 ```bash
 ./demo.sh
 ```
 
-If you are using OpenRouter, you can speed up the demo significantly:
+If you are using Google Gemini, you can skip local model checks:
 ```bash
-./demo.sh --api-key YOUR_OPENROUTER_KEY
+./demo.sh --provider google --google-key YOUR_KEY
 ```
 
 ---
 
-## 4. Manual Setup (Optional)
+## 🧹 Troubleshooting & Cleanup
 
-If you prefer a manual flow instead of using `install.sh`:
+If the installation is stuck or fails:
+1. **Clean up**: Run `./purge.sh` to remove all broken containers and images.
+2. **Space**: Ensure you have at least 2GB of free space (for Minimal tier).
+3. **Engine**: If Podman/Docker is unresponsive, the installer will attempt to restart it for you.
 
-### 4.1 Create the Python environment
-```bash
-uv sync
-```
-
-### 4.2 Start the supporting services
-```bash
-podman-compose up -d
-# Run database migrations
-uv run alembic upgrade head
-```
-
-### 4.3 Pull a model (if using local Ollama)
-```bash
-podman exec -it codeintel-ollama ollama pull phi3:mini
-```
-
-### 4.4 Start the API server
-```bash
-uv run code-intel serve
-```
-
----
-
-## 5. Troubleshooting
-
-### API fails to start
-- Check the logs with `podman logs codeintel-api` (if using containers) or check your terminal output.
-- Confirm the database and Redis containers are healthy.
-
-### Requirements generation issues
-- If using Ollama, ensure the model was pulled successfully.
-- If using OpenRouter, verify your API key and internet connectivity.
-- Check [docs/configuration.md](docs/configuration.md) to ensure your provider settings match.
-
----
-
-## 6. Next steps
-
-- [docs/use_cases_guide.md](docs/use_cases_guide.md) — practical use cases.
-- [docs/agent-integrations.md](docs/agent-integrations.md) — connecting to Claude or Cursor.
-- [docs/configuration.md](docs/configuration.md) — advanced settings.
+For advanced settings, see the [Configuration Guide](docs/configuration.md).

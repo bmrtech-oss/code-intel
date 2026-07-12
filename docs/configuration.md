@@ -1,135 +1,78 @@
-# Code-Intel Configuration Guide
+# Code-Intel Configuration & Decision Guide
 
-## Environment Variables
-
-Code-Intel can be configured using environment variables. You can create a `.env` file in the root directory.
-
-### Core Settings
-- `DATABASE_URL`: PostgreSQL connection string (asyncpg).
-- `REDIS_HOST`: Redis server hostname.
-- `REDIS_PORT`: Redis server port (default: 6379).
-- `READ_MODEL_STRICT_SYNC`: Whether to sync the read model (graph) immediately on fact insertion (default: true).
-- `USE_TEMPORAL`: Enable Temporal.io for durable indexing (default: false).
-
-### LLM Settings
-
-#### Ollama (Default)
-- `LLM_PROVIDER`: `ollama`
-- `LLM_MODEL`: The model name (e.g., `phi3:mini`, `deepseek-coder`).
-- `OLLAMA_URL`: URL to the Ollama API (default: `http://ollama:11434`).
-- `LLM_TEMPERATURE`: LLM sampling temperature (default: 0.7).
-
-#### OpenRouter / OpenAI Compatible
-- `LLM_PROVIDER`: `openrouter`
-- `LLM_MODEL`: The model identifier (e.g., `anthropic/claude-3-sonnet`).
-- `LLM_API_KEY`: Your OpenRouter or OpenAI API key.
-- `LLM_BASE_URL`: Base URL for the API (default: `https://openrouter.ai/api/v1`).
-- `LLM_TEMPERATURE`: LLM sampling temperature (default: 0.7).
-
-#### Google Gemini
-- `LLM_PROVIDER`: `google`
-- `LLM_MODEL`: The model identifier (e.g., `gemini-1.5-flash`).
-- `GOOGLE_API_KEY`: Your Google AI Studio API key.
-- `LLM_TEMPERATURE`: LLM sampling temperature (default: 0.7).
+Code-Intel is highly configurable to balance performance, disk space, and privacy. This guide helps you make the right choices during the interactive setup.
 
 ---
 
-## Source Code Ingestion
+## ⚡ Performance Tiers: Which one to choose?
 
-Code-Intel supports indexing both local directories and remote Git repositories (GitHub, GitLab, Bitbucket, etc.).
+During `./install.sh`, you will be asked to select a performance tier. This controls which AI libraries are installed and how much disk space is consumed.
 
-### Local Directory
-```bash
-uv run code-intel analyze /path/to/local/repo
-```
-
-### Remote Git Repository
-```bash
-uv run code-intel analyze https://github.com/user/repo.git --branch main --depth 1
-```
-The platform will automatically clone the repository into a temporary directory, analyze it, and then clean up.
-
----
-
-## Podman / Rocky Linux Troubleshooting
-
-If you are using Podman on Rocky Linux (or RHEL) and the installation "hangs" or the engine becomes unresponsive:
-
-1. **Storage Driver Performance**: Podman may report "Not using native diff for overlay." This causes slow image builds. Ensure your storage driver is optimized or use the `.dockerignore` file provided in the root to skip heavy local directories like `.venv`.
-2. **Socket Deadlocks**: If `podman ps` hangs, the Podman socket might be deadlocked. The `install.sh` script will attempt to restart the services, but you can also run:
-   ```bash
-   sudo systemctl restart podman.socket podman.service
-   ```
-3. **SELinux**: SELinux can sometimes block Podman socket access. Check with `sudo journalctl -xeu podman`.
-4. **System Reset**: As a last resort, if Podman is completely stuck, you can reset it (this deletes all your local containers and images):
-   ```bash
-   podman system reset
-   ```
-5. **Disk Space Management**: The platform footprint varies significantly based on the selected mode.
-
-### Setup Footprint Comparison
-
-| Tier | Host Space (`.venv`) | Image Space | Performance | Key Features |
+| Tier | Host Space | Image Space | Features | Recommended For |
 | :--- | :--- | :--- | :--- | :--- |
-| **Minimal (Default)** | **~600 MB** | **~800 MB** | N/A | Graph, Impact, Dead Code, Requirement Gen |
-| **Standard** | **~6.3 GB** | **~5.5 GB** | Balanced (CPU) | All above + **Semantic Search** |
-| **High** | **~7.5 GB** | **~12 GB** | Fast (GPU/CUDA) | All above + **GPU Accelerated Search** |
+| **Minimal** (Default) | **~600 MB** | **~800 MB** | Graph queries, Dead Code, Impact Analysis, Requirement Gen. | **Most users.** Fast setup, low RAM, covers 90% of use cases. |
+| **Standard** | **~6.3 GB** | **~5.5 GB** | All above + **Semantic Search** (Natural Language queries). | Users who want to search code by "meaning" using CPU. |
+| **High** | **~7.5 GB** | **~12 GB** | All above + **GPU Acceleration** (Nvidia CUDA). | Production environments or massive repositories (>1M lines). |
 
-### Recommendations for Minimal Space:
-1. **Use Cloud LLM**: Select Google Gemini or OpenRouter during setup to bypass the **5GB** Ollama model download.
-2. **Skip Local Venv**: Use `./install.sh --skip-venv` to avoid the local footprint entirely; the app will run inside containers.
-3. **Lightweight Mode**: Stay with the default (don't use `--full`) if you don't need semantic (natural language) search.
-
-### Cleanup & Recovery:
-- **Reset**: Run `./purge.sh` to completely remove all Code-Intel containers, images, and local caches.
-- **Prune**: If you see "no space left on device":
-  - `podman system prune -a`
-  - `podman volume prune`
-
-### Production & Performance: Switching to CUDA
-
-By default, the platform uses **CPU-only** libraries to minimize disk usage (~600MB vs ~6GB). For large-scale production deployments where high-speed semantic search is required:
-
-1. **Impact**: CPU-only mode is efficient for smaller repositories but will be slower for initial indexing of very large codebases (>1M lines).
-2. **Switching to CUDA**:
-   - In `pyproject.toml`, remove the `[[tool.uv.index]]` and `[tool.uv.sources]` sections related to `pytorch-cpu`.
-   - Update `Dockerfile` to use a CUDA-enabled base image (e.g., `nvidia/cuda:12.1.0-base-ubuntu22.04`).
-   - Run `uv sync --extra semantic` to pull the full GPU-enabled dependencies.
+### Trade-offs:
+- **Minimal Tier**: You lose the ability to ask natural language questions like *"How do we handle login?"*. However, you can still find exactly what calls the login function via the topological graph.
+- **Standard vs High**: Standard is significantly smaller but relies on your CPU for indexing. For most repositories, this is perfectly fine. High tier is only necessary if you have an Nvidia GPU and need sub-second indexing for very large codebases.
 
 ---
 
-## Script Reference
+## 🤖 LLM Providers: Local vs Cloud
 
-### `install.sh`
+The "Requirements Generation" feature requires an LLM.
 
-The one-click installer handles dependency syncing, infrastructure startup, and model initialization.
+| Provider | Setup Time | Space Used | Speed | Privacy |
+| :--- | :--- | :--- | :--- | :--- |
+| **Google Gemini** | **< 1 min** | **0 GB** | **Very Fast** | Remote |
+| **OpenRouter** | **< 1 min** | **0 GB** | **Fast** | Remote |
+| **Local Ollama** | **~10 min** | **~5 GB** | **Slow** (on CPU) | **Maximum** |
 
-**Defaults:**
-- Virtual Environment: `.venv`
-- Env File: `.env`
-- Model Pulling: Enabled
-- Container Engine: Auto-detected (Podman > Docker Compose plugin > Docker-compose)
+### Recommendations:
+1. **Best Experience**: Use **Google Gemini**. It's free (for standard tiers), extremely fast, and requires no local model downloads.
+2. **Maximum Privacy**: Use **Local Ollama**. Your code never leaves your machine, but ensure you have at least 16GB of RAM and 5GB of free disk space.
 
-**Options:**
-- `-v, --venv <name>`: Specify custom Python virtual environment.
-- `-s, --skip-models`: Skip pulling Ollama models (useful if using OpenRouter).
-- `-e, --env-file <path>`: Use a specific environment file.
-- `-h, --help`: Show help.
+---
 
-### `demo.sh`
+## 💾 Saving Host Disk Space
 
-Runs an end-to-end strategic demo of the platform's capabilities.
+If you want to keep your host machine clean, use the `--skip-venv` flag:
 
-**Defaults:**
-- LLM Provider: `ollama`
-- LLM Model: `phi3:mini`
+```bash
+./install.sh --skip-venv
+```
 
-**Remote Optimization:**
-If an `--api-key` or `LLM_API_KEY` is detected, the script automatically switches the provider to `openrouter` and uses `google/gemini-flash-1.5` as a fast default to avoid local download delays.
+**Why do this?**
+The platform runs entirely inside containers. By skipping the local virtual environment (`.venv`), you save **5.3 GB** of host disk space. You only need the local venv if you are a developer planning to run/debug the Python code directly in your IDE (like Cursor or VSCode).
 
-**Options:**
-- `--provider <name>`: LLM Provider (ollama|openrouter).
-- `--model <name>`: LLM Model identifier.
-- `--api-key <key>`: API Key for remote provider.
-- `--base-url <url>`: Base URL for remote provider.
-- `-h, --help`: Show help.
+---
+
+## 🧹 Cleanup & Reset
+
+If an installation fails due to disk space or you want to start fresh:
+
+```bash
+./purge.sh
+```
+
+This will:
+1. Stop and remove all Code-Intel containers.
+2. Delete all related images and volumes.
+3. Clear your local `uv` package cache and temporary build files.
+4. (Optional) Perform a full system prune.
+
+---
+
+## Remote Git Ingestion
+
+Code-Intel supports indexing remote repositories directly:
+
+```bash
+# In the CLI
+uv run code-intel analyze https://github.com/user/repo.git --branch main --depth 1
+
+# Via the API
+curl -X POST http://localhost:8000/analyze -d '{"repo_path": "https://github.com/user/repo.git"}'
+```
