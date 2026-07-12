@@ -87,40 +87,58 @@ if [ -z "$CURRENT_PROVIDER" ] || [ "$CURRENT_PROVIDER" == "ollama" ]; then
     echo ""
     echo -e "${CYAN}🤖 LLM Configuration (Mandatory)${NC}"
     echo "----------------------------"
-    echo "1) Google Gemini (Remote) [DEFAULT - FASTEST]"
+    echo "To save space and ensure high performance, a cloud provider is RECOMMENDED."
+    echo "1) Google Gemini (Remote) [DEFAULT - FASTEST/SMALLEST FOOTPRINT]"
     echo "2) OpenRouter (Remote)"
-    echo "3) Ollama (Local - ⚠️ Requires ~5GB extra disk space)"
+    echo "3) Ollama (Local - ⚠️ Requires ~5GB extra disk space and slow model download)"
 
-    if [ -t 0 ]; then read -p "Selection (1/2/3): " -n 1 -r LLM_CHOICE; echo ""; else read -r LLM_CHOICE; fi
+    if [ -t 0 ]; then
+        read -p "Selection (1/2/3): " -n 1 -r LLM_CHOICE
+        echo ""
+    else
+        read -r LLM_CHOICE
+    fi
 
     case "$LLM_CHOICE" in
         2)
-            read -p "Enter OpenRouter API Key: " INPUT_KEY
-            DEFAULT_MODEL="google/gemini-flash-1.5"
-            read -p "Enter Model Name (default: $DEFAULT_MODEL): " INPUT_MODEL
-            INPUT_MODEL=${INPUT_MODEL:-$DEFAULT_MODEL}
-            sed -i "s|LLM_PROVIDER=.*|LLM_PROVIDER=openrouter|" "$ENV_FILE"
-            sed -i "s|LLM_MODEL=.*|LLM_MODEL=$INPUT_MODEL|" "$ENV_FILE"
-            if grep -q "LLM_API_KEY=" "$ENV_FILE"; then sed -i "s|.*LLM_API_KEY=.*|LLM_API_KEY=$INPUT_KEY|" "$ENV_FILE"
-            else echo "LLM_API_KEY=$INPUT_KEY" >> "$ENV_FILE"; fi
-            SKIP_MODELS=true
+            read -p "Enter OpenRouter API Key (sk-or-...): " INPUT_KEY
+            if [ -n "$INPUT_KEY" ]; then
+                DEFAULT_MODEL="google/gemini-flash-1.5"
+                read -p "Enter Model Name (default: $DEFAULT_MODEL): " INPUT_MODEL
+                INPUT_MODEL=${INPUT_MODEL:-$DEFAULT_MODEL}
+
+                sed -i "s|LLM_PROVIDER=.*|LLM_PROVIDER=openrouter|" "$ENV_FILE"
+                sed -i "s|LLM_MODEL=.*|LLM_MODEL=$INPUT_MODEL|" "$ENV_FILE"
+                if grep -q "LLM_API_KEY=" "$ENV_FILE"; then
+                    sed -i "s|.*LLM_API_KEY=.*|LLM_API_KEY=$INPUT_KEY|" "$ENV_FILE"
+                else
+                    echo "LLM_API_KEY=$INPUT_KEY" >> "$ENV_FILE"
+                fi
+                SKIP_MODELS=true
+            fi
             ;;
         3)
             sed -i "s|LLM_PROVIDER=.*|LLM_PROVIDER=ollama|" "$ENV_FILE"
             sed -i "s|LLM_MODEL=.*|LLM_MODEL=phi3:mini|" "$ENV_FILE"
             ;;
-        *)
+        *) # Default: Google Gemini
             read -p "Enter Google Gemini API Key: " INPUT_KEY
             if [ -n "$INPUT_KEY" ]; then
                 DEFAULT_MODEL="gemini-1.5-flash"
                 read -p "Enter Model Name (default: $DEFAULT_MODEL): " INPUT_MODEL
                 INPUT_MODEL=${INPUT_MODEL:-$DEFAULT_MODEL}
+
                 sed -i "s|LLM_PROVIDER=.*|LLM_PROVIDER=google|" "$ENV_FILE"
                 sed -i "s|LLM_MODEL=.*|LLM_MODEL=$INPUT_MODEL|" "$ENV_FILE"
-                if grep -q "GOOGLE_API_KEY=" "$ENV_FILE"; then sed -i "s|.*GOOGLE_API_KEY=.*|GOOGLE_API_KEY=$INPUT_KEY|" "$ENV_FILE"
-                else echo "GOOGLE_API_KEY=$INPUT_KEY" >> "$ENV_FILE"; fi
+                if grep -q "GOOGLE_API_KEY=" "$ENV_FILE"; then
+                    sed -i "s|.*GOOGLE_API_KEY=.*|GOOGLE_API_KEY=$INPUT_KEY|" "$ENV_FILE"
+                else
+                    echo "GOOGLE_API_KEY=$INPUT_KEY" >> "$ENV_FILE"
+                fi
                 SKIP_MODELS=true
+                log_success "Configured for Google Gemini ($INPUT_MODEL)."
             else
+                echo "⚠️ No key provided. Falling back to Ollama local defaults."
                 sed -i "s|LLM_PROVIDER=.*|LLM_PROVIDER=ollama|" "$ENV_FILE"
             fi
             ;;
@@ -157,27 +175,47 @@ fi
 
 # 4. Check prerequisites
 log_info "Checking prerequisites..."
-if command -v podman-compose >/dev/null 2>&1; then COMPOSE_CMD="podman-compose"
-elif command -v docker-compose >/dev/null 2>&1; then COMPOSE_CMD="docker-compose"
-elif docker compose version >/dev/null 2>&1; then COMPOSE_CMD="docker compose"
-else log_error "docker-compose or podman-compose is required."; exit 1; fi
+if ! command -v uv >/dev/null 2>&1; then
+    echo "❌ uv is required. Install it via 'curl -LsSf https://astral.sh/uv/install.sh | sh'"
+    exit 1
+fi
+
+if command -v podman-compose >/dev/null 2>&1; then
+    COMPOSE_CMD="podman-compose"
+elif command -v docker-compose >/dev/null 2>&1; then
+    COMPOSE_CMD="docker-compose"
+elif docker compose version >/dev/null 2>&1; then
+    COMPOSE_CMD="docker compose"
+else
+    echo "❌ docker-compose or podman-compose is required."
+    exit 1
+fi
+echo "✅ Using $COMPOSE_CMD"
 
 # Verify engine
 if ! timeout 15s $COMPOSE_CMD ps >/dev/null 2>&1; then
     log_warn "Container engine is not responding. Attempting restart..."
-    sudo systemctl restart podman.socket podman.service 2>/dev/null || true
+    if command -v systemctl >/dev/null 2>&1; then
+        sudo systemctl restart podman.socket podman.service 2>/dev/null || true
+    fi
     sleep 5
+    if ! timeout 15s $COMPOSE_CMD ps >/dev/null 2>&1; then
+        echo "❌ Error: Container engine is still not responding. Run: podman system reset"
+        exit 1
+    fi
 fi
 
 # 5. Setup Python environment
 if [ "$SKIP_VENV" = false ]; then
     log_info "Syncing host environment..."
     export UV_PROJECT_ENVIRONMENT="$VENV_NAME"
-    case "$PERFORMANCE_TIER" in
-        "minimal")  uv sync --extra agents --no-cache ;;
-        "standard") uv sync --extra agents --extra semantic --no-cache ;;
-        "high")     uv sync --extra agents --extra semantic --no-cache ;;
-    esac
+    if [ "$LIGHTWEIGHT" = true ]; then
+        uv sync --extra agents --no-cache
+    else
+        uv sync --extra agents --extra semantic --no-cache
+    fi
+else
+    log_info "Skipping local virtual environment creation."
 fi
 
 # 6. Start Infrastructure
@@ -230,16 +268,39 @@ echo -e "  • REST API:  ${CYAN}http://localhost:8000${NC}"
 echo -e "  • Web UI:    ${CYAN}http://localhost:5173${NC}"
 echo -e "  • MCP Hub:   Configured for ${GREEN}Claude Desktop${NC} & ${GREEN}Cursor${NC}"
 echo ""
-echo -e "${BLUE}Quick Commands:${NC}"
-echo -e "  • Strategic Demo:  ${YELLOW}./demo.sh${NC}"
-echo -e "  • Analyze Code:    ${YELLOW}uv run code-intel analyze <PATH>${NC}"
-echo -e "  • Cleanup / Reset: ${YELLOW}./purge.sh${NC}"
-echo ""
 echo -e "${BLUE}Configuration:${NC}"
 echo -e "  • Tier:      ${GREEN}$PERFORMANCE_TIER${NC}"
-echo -e "  • LLM:       ${GREEN}$(grep LLM_PROVIDER "$ENV_FILE" | cut -d'=' -f2)${NC} (${GREEN}$(grep LLM_MODEL "$ENV_FILE" | cut -d'=' -f2)${NC})"
+echo -e "  • LLM:       ${GREEN}$FINAL_PROVIDER${NC}"
+echo ""
+echo -e "${CYAN}Welcome Wizard: What would you like to do next?${NC}"
+echo "----------------------------------------------"
+echo "1) Run the Strategic Demo (Uses built-in Python example)"
+echo "2) Analyze your own Git Repository (GitHub/GitLab URL)"
+echo "3) Exit and explore later"
 echo ""
 
-read -p "❓ Would you like to run the Strategic Demo now? (y/N): " -n 1 -r RUN_DEMO
-echo ""
-if [[ $RUN_DEMO =~ ^[Yy]$ ]]; then ./demo.sh; fi
+if [ -t 0 ]; then read -p "Selection (1/2/3): " -n 1 -r NEXT_STEP; echo ""; else read -r NEXT_STEP; fi
+
+case "$NEXT_STEP" in
+    1)
+        ./demo.sh
+        ;;
+    2)
+        echo ""
+        read -p "Enter Git Repository URL: " REPO_URL
+        read -p "Enter Branch (default: main): " REPO_BRANCH
+        REPO_BRANCH=${REPO_BRANCH:-main}
+        read -p "Enter Version Name (default: custom-v1): " REPO_VERSION
+        REPO_VERSION=${REPO_VERSION:-custom-v1}
+
+        echo -e "\n📥 ${CYAN}Starting analysis...${NC}"
+        # Use the container to perform analysis so we don't need host setup
+        $COMPOSE_CMD exec -i api code-intel analyze "$REPO_URL" --version "$REPO_VERSION" --branch "$REPO_BRANCH"
+
+        log_success "Analysis complete! You can now query this repository."
+        echo -e "Example query: ${YELLOW}curl http://localhost:8000/query -d '{\"rule\": \"dead_code\", \"commit_sha\": \"$REPO_VERSION\"}'${NC}"
+        ;;
+    *)
+        log_info "Happy Hacking! Access the UI at http://localhost:5173"
+        ;;
+esac

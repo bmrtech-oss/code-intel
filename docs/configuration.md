@@ -83,9 +83,20 @@ If `install.sh` reports a port conflict:
 Code-Intel supports indexing remote repositories directly:
 
 ```bash
-# In the CLI
-uv run code-intel analyze https://github.com/user/repo.git --branch main --depth 1
+# In the CLI (Host)
+uv run code-intel analyze https://github.com/user/repo.git --branch main
+
+# Via the Container (if skipping host venv)
+docker compose exec api code-intel analyze https://github.com/user/repo.git
 
 # Via the API
 curl -X POST http://localhost:8000/analyze -d '{"repo_path": "https://github.com/user/repo.git"}'
+
+### 🎬 Using the Interactive Demo for custom repos
+
+You can run the full strategic demo on your own repository to see how Code-Intel generates requirements and predicts impact for your specific code:
+
+```bash
+./demo.sh --repo-url https://github.com/your/repo.git --version-name my-project
+```
 ```
