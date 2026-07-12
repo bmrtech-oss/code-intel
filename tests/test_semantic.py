@@ -1,6 +1,10 @@
 import pytest
 import os
 import shutil
+
+# Skip all tests in this module if txtai is not installed
+txtai = pytest.importorskip("txtai")
+
 from src.semantic.indexer import SemanticIndexer
 from src.semantic.search import SemanticSearch
 
