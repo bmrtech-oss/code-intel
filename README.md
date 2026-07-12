@@ -85,15 +85,18 @@ sequenceDiagram
 ```bash
 ./install.sh
 ```
-This script handles dependency syncing, starts the infrastructure, runs migrations, pulls the required LLM models, and configures AI agent integrations. Run `./install.sh --help` for options like skipping models or using a custom venv.
+This script handles dependency syncing, starts the infrastructure, runs migrations, pulls the required LLM models, and configures AI agent integrations. It features an **Interactive Wizard** to select your [Performance Tier](docs/configuration.md#performance-tiers) and LLM provider.
 
-For advanced configuration, see the [Configuration Guide](docs/configuration.md).
+Run `./install.sh --help` for options like `--tier minimal` or `--skip-venv`.
 
 ### One-Click Strategic Demo
 ```bash
 ./demo.sh
 ```
-Experience the full power of Code-Intel (Intelligence, Prediction, Verification, and Autonomic Action) using the built-in Python example. For a faster demo using cloud LLMs, run `./demo.sh --api-key YOUR_KEY`.
+Experience the full power of Code-Intel (Intelligence, Prediction, Verification, and Autonomic Action).
+
+- **Custom Repo**: Run `./demo.sh --repo-url https://github.com/user/repo.git` to analyze your own code.
+- **Cloud LLM**: Use `./demo.sh --provider google --google-key YOUR_KEY` for a sub-second requirements generation experience.
 
 ### Manual Setup
 ```bash
@@ -210,8 +213,8 @@ export USE_BITEMPORAL="true"
 # 3. Run database migrations
 uv run alembic upgrade head
 
-# 4. Start the FastAPI server
-uv run fastapi dev src/api/server.py
+# 4. Start the FastAPI server (using the installed console script)
+uv run code-intel serve
 ```
 
 ### 2. Frontend Setup (React)

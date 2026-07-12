@@ -78,19 +78,32 @@ If `install.sh` reports a port conflict:
 
 ---
 
-## Remote Git Ingestion
+## 🐳 Running Commands via Container
 
-Code-Intel supports indexing remote repositories directly:
+If you used `--skip-venv` during installation, the `code-intel` command will not be available on your host machine. You should run all CLI commands through the API container:
 
 ```bash
-# In the CLI (Host)
-uv run code-intel analyze https://github.com/user/repo.git --branch main
+# General help
+docker compose exec api code-intel --help
 
-# Via the Container (if skipping host venv)
+# Analyze a remote repo
 docker compose exec api code-intel analyze https://github.com/user/repo.git
+
+# Start MCP server (for Claude Desktop integration)
+docker compose exec api code-intel mcp
+```
+
+## Remote Git Ingestion
+
+Code-Intel supports indexing remote repositories directly via CLI or API:
+
+```bash
+# In the CLI (Host - requires local venv)
+code-intel analyze https://github.com/user/repo.git --branch main
 
 # Via the API
 curl -X POST http://localhost:8000/analyze -d '{"repo_path": "https://github.com/user/repo.git"}'
+```
 
 ### 🎬 Using the Interactive Demo for custom repos
 
@@ -98,5 +111,4 @@ You can run the full strategic demo on your own repository to see how Code-Intel
 
 ```bash
 ./demo.sh --repo-url https://github.com/your/repo.git --version-name my-project
-```
 ```
