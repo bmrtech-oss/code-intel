@@ -7,7 +7,7 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 CYAN='\033[0;36m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
 # --- Configuration & Defaults ---
 VENV_NAME=".venv"
@@ -30,14 +30,31 @@ show_help() {
     echo "Usage: ./install.sh [OPTIONS]"
     echo ""
     echo "Options:"
-    echo "  -v, --venv <name>     Specify the Python virtual environment name (default: .venv)"
+    echo "  -v, --venv <name>     Specify virtual environment name (default: .venv)"
     echo "  -s, --skip-models     Skip pulling Ollama models"
     echo "  -e, --env-file <path> Path to environment file (default: .env)"
-    echo "  -d, --debug           Enable debug mode (don't detach containers, show full logs)"
-    echo "  -p, --purge           Run cleanup (purge.sh) before starting installation"
-    echo "  --skip-venv           Skip creating local virtual environment (saves host space)"
-    echo "  --tier <minimal|standard|high> Set performance tier (default: minimal)"
+    echo "  -d, --debug           Enable debug mode (show full logs)"
+    echo "  -p, --purge           Run cleanup (purge.sh) before starting"
+    echo "  --skip-venv           Skip creating local venv"
+    echo "  --tier <tier>         Set performance tier (minimal|standard|high)"
     echo "  -h, --help            Show this help message"
+}
+
+check_port() {
+    local port=$1
+    local name=$2
+    if command -v lsof >/dev/null 2>&1; then
+        if lsof -Pi :$port -sTCP:LISTEN -t >/dev/null ; then
+            log_error "Port $port ($name) is already in use."
+            return 1
+        fi
+    elif command -v netstat >/dev/null 2>&1; then
+        if netstat -tuln | grep -q ":$port " ; then
+            log_error "Port $port ($name) is already in use."
+            return 1
+        fi
+    fi
+    return 0
 }
 
 # --- Argument Parsing ---
@@ -103,9 +120,7 @@ if [ -z "$CURRENT_PROVIDER" ] || [ "$CURRENT_PROVIDER" == "ollama" ]; then
                 if grep -q "GOOGLE_API_KEY=" "$ENV_FILE"; then sed -i "s|.*GOOGLE_API_KEY=.*|GOOGLE_API_KEY=$INPUT_KEY|" "$ENV_FILE"
                 else echo "GOOGLE_API_KEY=$INPUT_KEY" >> "$ENV_FILE"; fi
                 SKIP_MODELS=true
-                log_success "Configured for Google Gemini ($INPUT_MODEL)."
             else
-                log_warn "No key provided. Falling back to local Ollama."
                 sed -i "s|LLM_PROVIDER=.*|LLM_PROVIDER=ollama|" "$ENV_FILE"
             fi
             ;;
@@ -127,18 +142,20 @@ case "$TIER_CHOICE" in
     *) PERFORMANCE_TIER="minimal" ;;
 esac
 
-log_success "Selected Tier: $PERFORMANCE_TIER"
+# 3. Port Conflict Check
+log_info "Checking for port conflicts..."
+CONFLICT=false
+check_port 8000 "API" || CONFLICT=true
+check_port 5432 "Postgres" || CONFLICT=true
+check_port 6379 "Redis" || CONFLICT=true
+[ "$SKIP_MODELS" = false ] && { check_port 11434 "Ollama" || CONFLICT=true; }
 
-# Summary
-echo ""
-echo -e "${CYAN}📋 Configuration Summary${NC}"
-echo "----------------------"
-log_info "Environment: $VENV_NAME (Skip: $SKIP_VENV)"
-log_info "Tier:        $PERFORMANCE_TIER"
-log_info "Provider:    $(grep LLM_PROVIDER "$ENV_FILE" | cut -d'=' -f2)"
-echo ""
+if [ "$CONFLICT" = true ]; then
+    log_error "Port conflicts detected. Please stop the conflicting services or run './purge.sh'."
+    exit 1
+fi
 
-# 3. Check prerequisites
+# 4. Check prerequisites
 log_info "Checking prerequisites..."
 if command -v podman-compose >/dev/null 2>&1; then COMPOSE_CMD="podman-compose"
 elif command -v docker-compose >/dev/null 2>&1; then COMPOSE_CMD="docker-compose"
@@ -152,9 +169,9 @@ if ! timeout 15s $COMPOSE_CMD ps >/dev/null 2>&1; then
     sleep 5
 fi
 
-# 4. Setup Python environment
+# 5. Setup Python environment
 if [ "$SKIP_VENV" = false ]; then
-    log_info "Syncing host environment (this may take a few minutes)..."
+    log_info "Syncing host environment..."
     export UV_PROJECT_ENVIRONMENT="$VENV_NAME"
     case "$PERFORMANCE_TIER" in
         "minimal")  uv sync --extra agents --no-cache ;;
@@ -163,7 +180,7 @@ if [ "$SKIP_VENV" = false ]; then
     esac
 fi
 
-# 5. Start Infrastructure
+# 6. Start Infrastructure
 log_info "Starting containers..."
 UP_FLAGS="-d --build"
 [ "$DEBUG" = true ] && UP_FLAGS="--build"
@@ -175,31 +192,27 @@ fi
 
 [ "$DEBUG" = true ] && exit 0
 
-# 6. Wait for API
+# 7. Wait for API
 echo ""
 log_info "Waiting for services to initialize..."
 MAX_RETRIES=60; COUNT=0
 until timeout 10s $COMPOSE_CMD exec -i api python -c "import sqlalchemy; print('API Ready')" > /dev/null 2>&1 || [ $COUNT -eq $MAX_RETRIES ]; do
-  # Detailed status dashboard
   if [[ "$COMPOSE_CMD" == "docker compose" ]]; then
       STATUSES=$(timeout 5s $COMPOSE_CMD ps --format "{{.Service}} [{{.Status}}]" 2>/dev/null | tr '\n' ', ' | sed 's/, $//')
-      echo -ne "\r   [${COUNT}/${MAX_RETRIES}] Current Status: ${CYAN}${STATUSES}${NC}   "
+      echo -ne "\r   [${COUNT}/${MAX_RETRIES}] Status: ${CYAN}${STATUSES}${NC}   "
   else
-      echo -ne "\r   [${COUNT}/${MAX_RETRIES}] Waiting for API service...   "
+      echo -ne "\r   [${COUNT}/${MAX_RETRIES}] Waiting for API...   "
   fi
   sleep 5; COUNT=$((COUNT + 1))
 done
 echo ""
 
-if [ $COUNT -eq $MAX_RETRIES ]; then
-    log_error "API service failed to start in time."; exit 1
-fi
+if [ $COUNT -eq $MAX_RETRIES ]; then log_error "API service failed to start."; exit 1; fi
 
-log_info "Running database migrations..."
 $COMPOSE_CMD exec -i api alembic upgrade head
 ./scripts/setup-agent.sh
 
-# 7. Model Pull
+# 8. Model Pull
 FINAL_PROVIDER=$(grep LLM_PROVIDER "$ENV_FILE" 2>/dev/null | cut -d'=' -f2 | tr -d '"' || echo "ollama")
 if [ "$FINAL_PROVIDER" == "ollama" ] && [ "$SKIP_MODELS" = false ]; then
     MODEL=$(grep LLM_MODEL "$ENV_FILE" 2>/dev/null | cut -d'=' -f2 | tr -d '"' || echo "phi3:mini")
@@ -229,6 +242,4 @@ echo ""
 
 read -p "❓ Would you like to run the Strategic Demo now? (y/N): " -n 1 -r RUN_DEMO
 echo ""
-if [[ $RUN_DEMO =~ ^[Yy]$ ]]; then
-    ./demo.sh
-fi
+if [[ $RUN_DEMO =~ ^[Yy]$ ]]; then ./demo.sh; fi

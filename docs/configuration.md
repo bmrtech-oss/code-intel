@@ -63,6 +63,19 @@ This will:
 3. Clear your local `uv` package cache and temporary build files.
 4. (Optional) Perform a full system prune.
 
+### 🔌 Port Conflict Troubleshooting
+
+Code-Intel uses the following ports by default:
+- **8000**: REST API
+- **5432**: PostgreSQL
+- **6379**: Redis
+- **11434**: Ollama (if using local models)
+
+If `install.sh` reports a port conflict:
+1. **Reset everything**: Run `./purge.sh`. It will attempt to stop Code-Intel containers and kill any orphaned processes on these ports.
+2. **Check other services**: Ensure you don't have another instance of Postgres or Redis running on your host machine.
+3. **Manual clear**: Run `lsof -i :<PORT>` to find the process ID and `kill -9 <PID>` to clear it.
+
 ---
 
 ## Remote Git Ingestion

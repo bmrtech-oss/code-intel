@@ -30,7 +30,24 @@ elif command -v docker >/dev/null 2>&1; then
     docker volume ls -q --filter "name=codeintel" | xargs -r docker volume rm 2>/dev/null || true
 fi
 
-# 4. Remove virtual environment and caches
+# 4. Clear Port Conflicts
+clear_port() {
+    local port=$1
+    if command -v lsof >/dev/null 2>&1; then
+        PID=$(lsof -Pi :$port -sTCP:LISTEN -t)
+        if [ -n "$PID" ]; then
+            echo "🔥 Clearing process $PID on port $port..."
+            kill -9 $PID 2>/dev/null || true
+        fi
+    fi
+}
+
+echo "🔌 Checking for lingering port conflicts..."
+for port in 8000 5432 6379 11434; do
+    clear_port $port
+done
+
+# 5. Remove virtual environment and caches
 echo "📦 Cleaning up local artifacts..."
 rm -rf .venv
 rm -rf .pytest_cache
@@ -38,13 +55,13 @@ rm -rf .ruff_cache
 rm -rf .mypy_cache
 find . -type d -name "__pycache__" -exec rm -rf {} +
 
-# 5. Clean uv cache
+# 6. Clean uv cache
 if command -v uv >/dev/null 2>&1; then
     echo "🧹 Cleaning uv cache..."
     uv cache clean
 fi
 
-# 6. Optional system-wide cleanup
+# 7. Optional system-wide cleanup
 read -p "❓ Would you like to perform a full container system prune? (y/N): " -n 1 -r
 echo ""
 if [[ $REPLY =~ ^[Yy]$ ]]; then
