@@ -83,11 +83,10 @@ echo -e "${CYAN}🚀 Starting Code-Intel One-Click Installation...${NC}"
 
 # 1. Package Structure Fix
 log_info "Verifying package structure..."
-touch src/lang/__init__.py
-touch src/storage/__init__.py
-touch src/cache/__init__.py
-touch src/analytics/__init__.py
-touch src/semantic/__init__.py
+# Ensure ALL subdirectories in src have __init__.py for proper module resolution in containers
+find src -type d -not -path '*/.*' -not -path '*/__pycache__*' | while read d; do
+  touch "$d/__init__.py"
+done
 
 # 2. Mandatory LLM Configuration Prompt
 CURRENT_PROVIDER=$(grep "^LLM_PROVIDER=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2 | tr -d '"' || echo "")
