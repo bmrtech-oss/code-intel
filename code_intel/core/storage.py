@@ -117,8 +117,11 @@ class VersionedStorage:
         Mark derived facts that depend on this fact as stale.
         Recursive walk if a derived fact depends on another derived fact.
         """
-        column = "depends_on_derived" if is_derived else "depends_on"
-        query = text(f"UPDATE derived_facts SET is_stale = TRUE WHERE :fid = ANY({column}) AND is_stale = FALSE RETURNING id")
+        if is_derived:
+            query = text("UPDATE derived_facts SET is_stale = TRUE WHERE :fid = ANY(depends_on_derived) AND is_stale = FALSE RETURNING id")
+        else:
+            query = text("UPDATE derived_facts SET is_stale = TRUE WHERE :fid = ANY(depends_on) AND is_stale = FALSE RETURNING id")
+
         result = await self.session.execute(query, {"fid": fact_id})
         stale_ids = [row[0] for row in result.all()]
         
@@ -155,8 +158,11 @@ class VersionedStorage:
         """
         Query the invalidation graph: "what depends on this fact?"
         """
-        column = "depends_on_derived" if is_derived else "depends_on"
-        query = text(f"SELECT id, fact_type, entity_id, is_stale FROM derived_facts WHERE :fid = ANY({column})")
+        if is_derived:
+            query = text("SELECT id, fact_type, entity_id, is_stale FROM derived_facts WHERE :fid = ANY(depends_on_derived)")
+        else:
+            query = text("SELECT id, fact_type, entity_id, is_stale FROM derived_facts WHERE :fid = ANY(depends_on)")
+
         result = await self.session.execute(query, {"fid": fact_id})
         return [dict(row) for row in result.mappings().all()]
 
