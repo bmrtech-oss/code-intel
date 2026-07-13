@@ -85,9 +85,12 @@ sequenceDiagram
 ```bash
 ./install.sh
 ```
-This script handles dependency syncing, starts the infrastructure, runs migrations, pulls the required LLM models, and configures AI agent integrations. It features an **Interactive Wizard** to select your [Performance Tier](docs/configuration.md#performance-tiers) and LLM provider.
+This script handles dependency syncing, starts the infrastructure, runs migrations, pulls the required LLM models, and configures AI agent integrations. It also supports non-interactive automation when you provide the needed environment values or run it in CI-style mode.
 
-Run `./install.sh --help` for options like `--tier minimal` or `--skip-venv`.
+Common options include:
+- `./install.sh --tier minimal`
+- `./install.sh --skip-venv`
+- `CI=1 ./install.sh --skip-venv --tier minimal`
 
 ### One-Click Strategic Demo
 ```bash
@@ -95,8 +98,18 @@ Run `./install.sh --help` for options like `--tier minimal` or `--skip-venv`.
 ```
 Experience the full power of Code-Intel (Intelligence, Prediction, Verification, and Autonomic Action).
 
-- **Custom Repo**: Run `./demo.sh --repo-url https://github.com/user/repo.git` to analyze your own code.
-- **Cloud LLM**: Use `./demo.sh --provider google --google-key YOUR_KEY` for a sub-second requirements generation experience.
+The demo now defaults to:
+- **Provider**: OpenRouter
+- **Model**: `openai/gpt-oss-120b:free`
+- **Repository**: `https://github.com/neubig/starter-repo`
+- **API key**: loaded from `.env` via `LLM_API_KEY`
+
+For a fully non-interactive run:
+```bash
+./demo.sh --defaults --repo-url=https://github.com/neubig/starter-repo
+```
+
+To override defaults, use flags such as `--provider`, `--model`, `--api-key`, `--google-key`, or `--repo-url`.
 
 ### Manual Setup
 ```bash
@@ -160,6 +173,7 @@ The repository documentation set lives under [docs](docs):
 
 - [INSTALL.md](INSTALL.md) — full local setup guide, including prerequisites, services, and a sample repository walkthrough.
 - [docs/demo_guide.md](docs/demo_guide.md) — step-by-step feature demo from ingestion through requirements generation.
+- [TEST_GUIDE.md](TEST_GUIDE.md) — lightweight smoke-test and verification checklist for the current installer/demo/MCP flow.
 - [docs/code-intel-design.md](docs/code-intel-design.md) — high-level system design and architecture notes.
 - [docs/code-intel-nxt.md](docs/code-intel-nxt.md) — next-step roadmap and product direction.
 - [docs/agent-integrations.md](docs/agent-integrations.md) — guide for connecting Code-Intel to Claude, Cursor, and Python agents.
