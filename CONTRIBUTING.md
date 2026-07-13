@@ -27,10 +27,12 @@ First off, thank you for considering contributing to Code-Intel! It's people lik
 
 ## 📝 Pull Request Guidelines
 
-- Keep PRs focused. One feature or bug fix per PR.
-- Include tests for any new functionality.
-- Update documentation if necessary.
-- Follow the existing code style (we use `ruff`).
+- **Conventional Commits**: We enforce the [Conventional Commits](https://www.conventionalcommits.org/) specification (e.g., `feat:`, `fix:`, `docs:`).
+- **Small PRs**: Keep changes under 400 lines whenever possible.
+- **Bi-Temporal Facts**: Ensure any changes to the data layer respect the `introduced_in` / `deleted_in` metadata pattern.
+- **Tests**: Include tests for any new functionality.
+- **Docs**: Update ADRs (`docs/adr/`) if changing the architecture.
+- Follow the existing code style (we use `ruff` and `black`).
 
 ## 🤝 Code of Conduct
 
