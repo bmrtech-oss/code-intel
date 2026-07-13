@@ -7,6 +7,11 @@ REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
 READ_MODEL_STRICT_SYNC = os.getenv("READ_MODEL_STRICT_SYNC", "true").lower() == "true"
 USE_TEMPORAL = os.getenv("USE_TEMPORAL", "false").lower() == "true"
 
+# Feature Flags
+def is_feature_enabled(feature_name: str, default: bool = False) -> bool:
+    """Check if a feature is enabled via environment variable."""
+    return os.getenv(f"FEATURE_{feature_name.upper()}", str(default)).lower() == "true"
+
 # LLM Configuration
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "ollama") # "ollama", "openrouter", or "google"
 LLM_MODEL = os.getenv("LLM_MODEL", "phi3:mini")

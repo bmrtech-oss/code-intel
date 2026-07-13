@@ -1,0 +1,20 @@
+prompts:
+  - id: requirement-gen
+    prompt: file://prompts/phi3_mini.txt
+
+providers:
+  - id: ollama:phi3:mini
+    config:
+      base_url: http://localhost:11434
+
+tests:
+  - vars:
+      code_facts: |
+        - class: LLMUDF
+          methods: [generate_requirements, validate_artifact]
+          calls: [ollama.AsyncClient, httpx.post]
+    assert:
+      - type: javascript
+        value: output.contains("Epic") && output.contains("Story")
+      - type: icontains
+        value: "requirement"
