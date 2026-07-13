@@ -12,6 +12,9 @@ def is_feature_enabled(feature_name: str, default: bool = False) -> bool:
     """Check if a feature is enabled via environment variable."""
     return os.getenv(f"FEATURE_{feature_name.upper()}", str(default)).lower() == "true"
 
+# Security Configuration
+ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:3000").split(",")
+
 # LLM Configuration
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "ollama") # "ollama", "openrouter", or "google"
 LLM_MODEL = os.getenv("LLM_MODEL", "phi3:mini")

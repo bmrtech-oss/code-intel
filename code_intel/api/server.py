@@ -16,12 +16,13 @@ from ..core.rules import RuleEngine
 from ..core.udf import LLMUDF
 from ..core.git_handler import GitRepoHandler
 from ..worker.tasks import queue, llm_queue, run_ingestion, generate_requirements_task
+from ..settings import ALLOWED_ORIGINS
 
 app = FastAPI(title="Code Intelligence Platform (Prod)", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Restrict in production
+    allow_origins=ALLOWED_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
 )
