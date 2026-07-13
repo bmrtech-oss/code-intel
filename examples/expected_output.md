@@ -89,7 +89,7 @@ Every requirement generation job now returns a structured JSON result via Ollama
       "tasks": [
         {
           "text": "Implement RQ integration",
-          "traceability": ["src.worker.tasks.generate_requirements_task"]
+          "traceability": ["code_intel.worker.tasks.generate_requirements_task"]
         }
       ]
     },

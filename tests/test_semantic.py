@@ -1,8 +1,12 @@
 import pytest
 import os
 import shutil
-from src.semantic.indexer import SemanticIndexer
-from src.semantic.search import SemanticSearch
+
+# Skip all tests in this module if txtai is not installed
+txtai = pytest.importorskip("txtai")
+
+from code_intel.semantic.indexer import SemanticIndexer
+from code_intel.semantic.search import SemanticSearch
 
 @pytest.mark.asyncio
 async def test_semantic_indexing_and_search():

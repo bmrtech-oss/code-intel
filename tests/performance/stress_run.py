@@ -2,11 +2,11 @@ import asyncio
 import time
 import logging
 from git import Repo
-from src.core.git_handler import GitRepoHandler
-from src.storage.bitemporal_adapter import BiTemporalAdapter
-from src.storage.graph_engine import SimpleGraphEngine
-from src.cache.memory_cache import MemoryCache
-from src.cache.cache_bootstrap import CacheBootstrap
+from code_intel.core.git_handler import GitRepoHandler
+from code_intel.storage.bitemporal_adapter import BiTemporalAdapter
+from code_intel.storage.graph_engine import SimpleGraphEngine
+from code_intel.cache.memory_cache import MemoryCache
+from code_intel.cache.cache_bootstrap import CacheBootstrap
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

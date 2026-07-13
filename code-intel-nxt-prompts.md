@@ -4,7 +4,7 @@
 
 > **Context:** We are building `code-intel`, a next-gen code intelligence platform. We track code structure directly against a Git Directed Acyclic Graph (DAG) using a topological schema rather than database timestamps.
 > **Task:**
-> 1. Create Tree-sitter AST handlers for Python, TypeScript, and Go (`src/lang/python_handler.py`, `ts_handler.py`, `go_handler.py`). They must extract structural identities: fully qualified names for modules, classes, functions, and call actions. Add an explicit pass or stub for tracking cross-file dynamic method invocations.
+> 1. Create Tree-sitter AST handlers for Python, TypeScript, and Go (`code_intel/lang/python_handler.py`, `ts_handler.py`, `go_handler.py`). They must extract structural identities: fully qualified names for modules, classes, functions, and call actions. Add an explicit pass or stub for tracking cross-file dynamic method invocations.
 > 2. Build a small multi-language code fixture workspace inside `tests/golden/` that simulates a common real-world architecture (e.g., an API handler calling a repository layer). Include explicit instances of dead functions and deep call chains to test parsing accuracy.
 > 
 > 
@@ -13,8 +13,8 @@
 
 > **Context:** We need a session layer that maps user environment lookups to specific points in a project's repository history.
 > **Task:**
-> 1. Write `src/core/workspace.py`. Implement a Redis-backed session manager that stores and maintains active workspace sessions. Instead of just saving a flat workspace ID, it must actively store: `current_branch`, the active `current_sha`, and a cached, ordered list of all ancestor commit SHAs leading up to that point.
-> 2. Build an asynchronous MCP (Model Context Protocol) server in `src.mcp.server.py` using the python `mcp` SDK. Expose 5 core tools: `query_call_graph`, `query_dead_code`, `generate_requirements`, `query_impact`, and `semantic_search`. **Crucial design constraint:** Every tool definition must accept an optional `commit_sha: str` input parameter. If this parameter is omitted by the AI client, default automatically to the active workspace SHA retrieved from Redis.
+> 1. Write `code_intel/core/workspace.py`. Implement a Redis-backed session manager that stores and maintains active workspace sessions. Instead of just saving a flat workspace ID, it must actively store: `current_branch`, the active `current_sha`, and a cached, ordered list of all ancestor commit SHAs leading up to that point.
+> 2. Build an asynchronous MCP (Model Context Protocol) server in `code_intel.mcp.server.py` using the python `mcp` SDK. Expose 5 core tools: `query_call_graph`, `query_dead_code`, `generate_requirements`, `query_impact`, and `semantic_search`. **Crucial design constraint:** Every tool definition must accept an optional `commit_sha: str` input parameter. If this parameter is omitted by the AI client, default automatically to the active workspace SHA retrieved from Redis.
 > 
 > 
 
@@ -31,7 +31,7 @@
 
 > **Context:** Our core MCP tools need full analytical logic, and we need a lightweight visual interface to switch between repository states.
 > **Task:**
-> 1. Complete the tool execution layers in `src.mcp.server.py` to connect seamlessly with the workspace storage layer. Add `get_workspace_info` to read current Git states.
+> 1. Complete the tool execution layers in `code_intel.mcp.server.py` to connect seamlessly with the workspace storage layer. Add `get_workspace_info` to read current Git states.
 > 2. Initialize a clean frontend application in `ui/`. Build a responsive three-panel interface layout (Left: File tree & Git history branch selector, Center: Interactive graph rendering view, Right: Interactive MCP Chat panel).
 > 3. Create a `.mcp.json` configuration manifest that exposes this local server directly to tooling like Claude Code, allowing it to invoke our workspace analysis tools.
 > 
@@ -72,7 +72,7 @@ Tasks 4.1 and 4.2 are fully implemented. `txtai` with `BAAI/bge-small-en-v1.5` p
 > **Context:** We are preparing to launch the Git-DAG architecture into high-traffic production environments.
 > **Task:**
 > 1. Create an automated workload script (`tests/performance/stress_run.py`) that clones a target repository with a deep commit history (thousands of revisions) to verify how our engine handles deep ancestry graph path traversals.
-> 2. Integrate Prometheus metrics hooks throughout `src/storage/bitemporal_adapter.py` and the cache layer. Track cache hit ratios, delta sync delays, graph lookup times, and system error events. Provide a standard Grafana dashboard dashboard configuration JSON.
+> 2. Integrate Prometheus metrics hooks throughout `code_intel/storage/bitemporal_adapter.py` and the cache layer. Track cache hit ratios, delta sync delays, graph lookup times, and system error events. Provide a standard Grafana dashboard dashboard configuration JSON.
 > 
 > 
 
@@ -85,6 +85,6 @@ Tasks 4.1 and 4.2 are fully implemented. `txtai` with `BAAI/bge-small-en-v1.5` p
 > **Context:** We are building advanced, enterprise-grade capabilities over our stable code intelligence platform.
 > **Task:**
 > 1. Extend our graph database node definition schema to support cross-repository references. If an internal microservice references an external library or API interface tracked in another repository, create a cross-repo edge linking the two distinct code graph definitions.
-> 2. Write a predictive analysis engine in `src/analytics/predictor.py`. Look back through the historical modification records (`modified_in` lists) across our call graphs to find components that are frequently modified together. Use this structural coupling data to predict and display the potential blast radius of proposed code modifications.
+> 2. Write a predictive analysis engine in `code_intel/analytics/predictor.py`. Look back through the historical modification records (`modified_in` lists) across our call graphs to find components that are frequently modified together. Use this structural coupling data to predict and display the potential blast radius of proposed code modifications.
 > 
 >

@@ -83,15 +83,33 @@ sequenceDiagram
 
 ### One-Click Installation (Recommended)
 ```bash
-./install.sh [env_name]
+./install.sh
 ```
-This script handles dependency syncing, starts the infrastructure, runs migrations, pulls the required LLM models, and configures AI agent integrations. You can optionally provide a custom name for the Python virtual environment (defaults to `.venv`).
+This script handles dependency syncing, starts the infrastructure, runs migrations, pulls the required LLM models, and configures AI agent integrations. It also supports non-interactive automation when you provide the needed environment values or run it in CI-style mode.
+
+Common options include:
+- `./install.sh --tier minimal`
+- `./install.sh --skip-venv`
+- `CI=1 ./install.sh --skip-venv --tier minimal`
 
 ### One-Click Strategic Demo
 ```bash
 ./demo.sh
 ```
-Experience the full power of Code-Intel (Intelligence, Prediction, Verification, and Autonomic Action) using the built-in Python example.
+Experience the full power of Code-Intel (Intelligence, Prediction, Verification, and Autonomic Action).
+
+The demo now defaults to:
+- **Provider**: OpenRouter
+- **Model**: `openai/gpt-oss-120b:free`
+- **Repository**: `https://github.com/neubig/starter-repo`
+- **API key**: loaded from `.env` via `LLM_API_KEY`
+
+For a fully non-interactive run:
+```bash
+./demo.sh --defaults --repo-url=https://github.com/neubig/starter-repo
+```
+
+To override defaults, use flags such as `--provider`, `--model`, `--api-key`, `--google-key`, or `--repo-url`.
 
 ### Manual Setup
 ```bash
@@ -111,11 +129,17 @@ podman exec -it codeintel-ollama ollama pull phi3:mini
 ## Usage
 
 - API docs: http://localhost:8000/docs
-- Analyze a repo:
+- Analyze a repo (local path or remote Git URL):
 	```bash
+	# Local
 	curl -X POST http://localhost:8000/analyze \
 		-H "Content-Type: application/json" \
 		-d '{"repo_path": "/repo"}'
+
+	# Remote GitHub/GitLab
+	curl -X POST http://localhost:8000/analyze \
+		-H "Content-Type: application/json" \
+		-d '{"repo_path": "https://github.com/user/repo.git", "branch": "main"}'
 	```
 - Query dead code at specific commit:
 	```bash
@@ -149,6 +173,7 @@ The repository documentation set lives under [docs](docs):
 
 - [INSTALL.md](INSTALL.md) — full local setup guide, including prerequisites, services, and a sample repository walkthrough.
 - [docs/demo_guide.md](docs/demo_guide.md) — step-by-step feature demo from ingestion through requirements generation.
+- [TEST_GUIDE.md](TEST_GUIDE.md) — lightweight smoke-test and verification checklist for the current installer/demo/MCP flow.
 - [docs/code-intel-design.md](docs/code-intel-design.md) — high-level system design and architecture notes.
 - [docs/code-intel-nxt.md](docs/code-intel-nxt.md) — next-step roadmap and product direction.
 - [docs/agent-integrations.md](docs/agent-integrations.md) — guide for connecting Code-Intel to Claude, Cursor, and Python agents.
@@ -202,8 +227,8 @@ export USE_BITEMPORAL="true"
 # 3. Run database migrations
 uv run alembic upgrade head
 
-# 4. Start the FastAPI server
-uv run fastapi dev src/api/server.py
+# 4. Start the FastAPI server (using the installed console script)
+uv run code-intel serve
 ```
 
 ### 2. Frontend Setup (React)

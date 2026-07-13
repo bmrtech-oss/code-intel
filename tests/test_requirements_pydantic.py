@@ -1,14 +1,15 @@
 import pytest
 import json
 from unittest.mock import AsyncMock, MagicMock
-from src.core.udf import LLMUDF, RequirementResponse
+from code_intel.core.udf import LLMUDF, RequirementResponse
 
 @pytest.mark.asyncio
 async def test_generate_requirements_validation():
     udf = LLMUDF()
     
-    # Mock Ollama client
-    udf.client.generate = AsyncMock()
+    # Mock provider and client
+    udf.provider = "ollama"
+    udf.ollama_client = AsyncMock()
     
     # Sample valid response that matches RequirementResponse schema
     valid_json = {
@@ -23,7 +24,7 @@ async def test_generate_requirements_validation():
     
     mock_response = MagicMock()
     mock_response.response = json.dumps(valid_json)
-    udf.client.generate.return_value = mock_response
+    udf.ollama_client.generate.return_value = mock_response
     
     symbols = [{"id": 1, "name": "func1"}]
     calls = []
@@ -40,7 +41,9 @@ async def test_generate_requirements_validation():
 @pytest.mark.asyncio
 async def test_generate_requirements_fallback():
     udf = LLMUDF()
-    udf.client.generate = AsyncMock()
+    # Mock provider and client
+    udf.provider = "ollama"
+    udf.ollama_client = AsyncMock()
     
     # Response with extra text (should trigger fallback)
     raw_response = "Here is your JSON: " + json.dumps({
@@ -53,7 +56,7 @@ async def test_generate_requirements_fallback():
     
     mock_response = MagicMock()
     mock_response.response = raw_response
-    udf.client.generate.return_value = mock_response
+    udf.ollama_client.generate.return_value = mock_response
     
     result = await udf.generate_requirements([], [])
     assert result["result"]["epic"] == "Fallback"

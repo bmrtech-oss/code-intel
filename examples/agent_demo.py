@@ -1,5 +1,5 @@
 import asyncio
-from src.agent_tools import get_langchain_tools
+from code_intel.agent_tools import get_langchain_tools
 
 async def main():
     print("🚀 Code-Intel Agent Demo")

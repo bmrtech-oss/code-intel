@@ -6,7 +6,7 @@ from langchain_core.messages import HumanMessage
 from langchain_core.tools import tool
 from langgraph.prebuilt import create_react_agent
 
-from src.agent_tools import get_langchain_tools
+from code_intel.agent_tools import get_langchain_tools
 
 # --- 1. Custom Tools for Git and File Operations ---
 

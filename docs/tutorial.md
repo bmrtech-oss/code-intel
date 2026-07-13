@@ -111,7 +111,7 @@ podman exec -it codeintel-ollama ollama pull phi3:mini
 From the repo root:
 
 ```bash
-uv run python -m src.cli.main serve
+uv run python -m code_intel.cli.main serve
 ```
 
 The API will be available at `http://localhost:8000`. You can verify it's up with:
@@ -134,7 +134,7 @@ Create `app.py`:
 
 ```bash
 cat > /tmp/codeintel-sample/src/app.py <<'PY'
-from src.helpers import format_message
+from code_intel.helpers import format_message
 
 def greet(name: str) -> str:
     return format_message(f"Hello {name}")
@@ -162,7 +162,7 @@ This sample gives you:
 ## Step 5: Index the Sample Repository
 
 ```bash
-uv run python -m src.cli.main analyze /tmp/codeintel-sample --version sample-v1
+uv run python -m code_intel.cli.main analyze /tmp/codeintel-sample --version sample-v1
 ```
 
 The indexing step parses the sample files and writes facts into the versioned storage layer.
@@ -239,7 +239,7 @@ Code-Intel combines structural code identity with embeddings for natural languag
 
 ```bash
 # Re-index the semantic layer (uses BAAI/bge-small-en-v1.5)
-uv run python -c "import asyncio; from src.semantic.indexer import SemanticIndexer; import json; nodes = [json.loads(l) for l in open('nodes.jsonl')]; asyncio.run(SemanticIndexer().index_nodes(nodes))"
+uv run python -c "import asyncio; from code_intel.semantic.indexer import SemanticIndexer; import json; nodes = [json.loads(l) for l in open('nodes.jsonl')]; asyncio.run(SemanticIndexer().index_nodes(nodes))"
 
 # Perform a search
 curl -X GET "http://localhost:8000/search?q=how+to+handle+git+cloning"
@@ -252,7 +252,7 @@ curl -X GET "http://localhost:8000/search?q=how+to+handle+git+cloning"
 Predict the blast radius of a code change based on both the call graph and historical co-modification patterns:
 
 ```bash
-curl -X GET "http://localhost:8000/analytics/predict-impact?symbol=src.core.git_handler.GitRepoHandler.clone&commit_sha=v1"
+curl -X GET "http://localhost:8000/analytics/predict-impact?symbol=code_intel.core.git_handler.GitRepoHandler.clone&commit_sha=v1"
 ```
 
 ---
@@ -262,7 +262,7 @@ curl -X GET "http://localhost:8000/analytics/predict-impact?symbol=src.core.git_
 Connect Claude Code or other AI assistants directly to your codebase intelligence:
 
 ```bash
-uv run python -m src.cli.main mcp
+uv run python -m code_intel.cli.main mcp
 ```
 
 Claude can now call tools like `predict_impact`, `query_dead_code`, and `semantic_search` to assist you in real-time during your development sessions.

@@ -32,6 +32,7 @@ services:
       retries: 5
 
   ollama:
+    profiles: ["ollama"]
     image: docker.io/ollama/ollama:latest
     container_name: codeintel-ollama
     ports:
@@ -43,7 +44,10 @@ services:
     restart: unless-stopped
 
   api:
-    build: .
+    build:
+      context: .
+      args:
+        TIER: "${CODEINTEL_TIER:-minimal}"
     image: codeintel-api:latest
     container_name: codeintel-api
     ports:
@@ -53,28 +57,28 @@ services:
       - REDIS_HOST=redis
       - USE_BITEMPORAL=true
       - OLLAMA_URL=http://ollama:11434
-      # - LLM_MODEL=tinyllama   # instead of phi3:mini
       - LLM_MODEL=phi3:mini
-      # - LLM_MODEL=deepseek-coder:1.3b
-      # - LLM_MODEL=iodose/nuextract-v1.5:3.8b-q6_K
       - LLM_TEMPERATURE=0.0
+      - PYTHONPATH=/app
 
     depends_on:
       postgres:
         condition: service_healthy
       redis:
-        condition: service_healthy
-      ollama:
         condition: service_started
     volumes:
-      - ./src:/app/src
-      - ./data:/app/data
-      - ./prompts:/app/prompts:ro   # read-only
-    command: ["uv", "run", "python", "-m", "src", "serve", "--host", "0.0.0.0", "--port", "8000"]
+      - ./code_intel:/app/code_intel:Z
+      - ./data:/app/data:Z
+      - ./prompts:/app/prompts:ro,Z
+    # Start through the module entry point to avoid console-script import issues
+    command: ["python", "-m", "code_intel", "serve", "--host", "0.0.0.0", "--port", "8000"]
     restart: unless-stopped
 
   worker:
-    build: .
+    build:
+      context: .
+      args:
+        TIER: "${CODEINTEL_TIER:-minimal}"
     image: codeintel-worker:latest
     container_name: codeintel-worker
     environment:
@@ -82,31 +86,37 @@ services:
       - REDIS_HOST=redis
       - USE_BITEMPORAL=true
       - OLLAMA_URL=http://ollama:11434
+      - PYTHONPATH=/app
     depends_on:
       postgres:
         condition: service_healthy
       redis:
-        condition: service_healthy
+        condition: service_started
     volumes:
-      - ./src:/app/src
-    command: ["uv", "run", "rq", "worker", "ingestion", "llm"]
+      - ./code_intel:/app/code_intel
+    # Use rq directly as it is installed in the venv
+    command: ["rq", "worker", "ingestion", "llm"]
     restart: unless-stopped
 
   mcp-server:
     profiles: ["mcp"]
-    build: .
+    build:
+      context: .
+      args:
+        TIER: "${CODEINTEL_TIER:-minimal}"
     image: codeintel-mcp:latest
     container_name: codeintel-mcp
     environment:
       - DATABASE_URL=postgresql+asyncpg://postgres:password@postgres:5432/codeintel
       - REDIS_HOST=redis
       - USE_BITEMPORAL=true
+      - PYTHONPATH=/app
     depends_on:
       postgres:
         condition: service_healthy
       redis:
-        condition: service_healthy
-    command: ["code-intel-mcp"]
+        condition: service_started
+    command: ["python", "-m", "code_intel", "mcp"]
     restart: unless-stopped
 
 volumes:

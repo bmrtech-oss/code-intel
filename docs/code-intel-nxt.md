@@ -34,7 +34,7 @@ To eliminate temporal collisions during branching and merging, the storage layer
     └────────────────┘                     └────────────────┘
 ```
 
-- **Nodes (`DefNode`)**: Retain structural identity (e.g., fully qualified names like `src/auth.py::login`).
+- **Nodes (`DefNode`)**: Retain structural identity (e.g., fully qualified names like `code_intel/auth.py::login`).
 - **Edges & States**: Versioned inline using three metadata properties:
   - `introduced_in`: The Git commit SHA where the node/edge was first discovered.
   - `modified_in`: An array of commit SHAs tracking internal content mutations.
@@ -113,7 +113,7 @@ This section provides **phase‑by‑phase tasks and AI‑ready prompts**. Each 
 **Prompt:**
 > **Context:** We are building `code-intel`, a next-gen code intelligence platform. We track code structure directly against a Git Directed Acyclic Graph (DAG) using a topological schema rather than database timestamps.
 > **Task:**
-> 1. Create Tree-sitter AST handlers for Python, TypeScript, and Go (`src/lang/python_handler.py`, `ts_handler.py`, `go_handler.py`). They must extract structural identities: fully qualified names for modules, classes, functions, and call actions. Add an explicit pass or stub for tracking cross-file dynamic method invocations.
+> 1. Create Tree-sitter AST handlers for Python, TypeScript, and Go (`code_intel/lang/python_handler.py`, `ts_handler.py`, `go_handler.py`). They must extract structural identities: fully qualified names for modules, classes, functions, and call actions. Add an explicit pass or stub for tracking cross-file dynamic method invocations.
 > 2. Build a small multi-language code fixture workspace inside `tests/golden/` that simulates a common real-world architecture (e.g., an API handler calling a repository layer). Include explicit instances of dead functions and deep call chains to test parsing accuracy.
 
 #### Task 0.3 & 0.4: Git‑DAG Workspace & Git‑Aware MCP Server
@@ -121,8 +121,8 @@ This section provides **phase‑by‑phase tasks and AI‑ready prompts**. Each 
 **Upgraded Prompt:**
 > **Context:** We need a session layer that maps user environment lookups to specific points in a project's repository history.
 > **Task:**
-> 1. Write `src/core/workspace.py`. Implement a Redis-backed session manager that stores and maintains active workspace sessions. Store `current_branch`, `current_sha`, and the **branch tip SHA**. For ancestry lookups, do **not** pre‑cache the entire ancestor list. Instead, implement a paginated ancestry query that walks the commit DAG on demand, with an in‑memory LRU for the most recent 100 commits. Use Redis to cache the ancestor list per commit with a TTL of 1 hour.
-> 2. Build an asynchronous MCP (Model Context Protocol) server in `src.mcp.server.py` using the python `mcp` SDK. Expose 5 core tools: `query_call_graph`, `query_dead_code`, `generate_requirements`, `query_impact`, and `semantic_search`. **Crucial design constraint:** Every tool definition must accept an optional `commit_sha: str` input parameter. If this parameter is omitted by the AI client, default automatically to the active workspace SHA retrieved from Redis.
+> 1. Write `code_intel/core/workspace.py`. Implement a Redis-backed session manager that stores and maintains active workspace sessions. Store `current_branch`, `current_sha`, and the **branch tip SHA**. For ancestry lookups, do **not** pre‑cache the entire ancestor list. Instead, implement a paginated ancestry query that walks the commit DAG on demand, with an in‑memory LRU for the most recent 100 commits. Use Redis to cache the ancestor list per commit with a TTL of 1 hour.
+> 2. Build an asynchronous MCP (Model Context Protocol) server in `code_intel.mcp.server.py` using the python `mcp` SDK. Expose 5 core tools: `query_call_graph`, `query_dead_code`, `generate_requirements`, `query_impact`, and `semantic_search`. **Crucial design constraint:** Every tool definition must accept an optional `commit_sha: str` input parameter. If this parameter is omitted by the AI client, default automatically to the active workspace SHA retrieved from Redis.
 
 #### Task 0.5 & 0.6: Engine Evaluation Script
 
@@ -141,7 +141,7 @@ This section provides **phase‑by‑phase tasks and AI‑ready prompts**. Each 
 **Prompt:**
 > **Context:** Our core MCP tools need full analytical logic, and we need a lightweight visual interface to switch between repository states.
 > **Task:**
-> 1. Complete the tool execution layers in `src.mcp.server.py` to connect seamlessly with the workspace storage layer. Add `get_workspace_info` to read current Git states.
+> 1. Complete the tool execution layers in `code_intel.mcp.server.py` to connect seamlessly with the workspace storage layer. Add `get_workspace_info` to read current Git states.
 > 2. Initialize a clean frontend application in `ui/`. Build a responsive three-panel interface layout (Left: File tree & Git history branch selector, Center: Interactive graph rendering view, Right: Interactive MCP Chat panel). Use Zustand for state management and cache the last 5 viewed commits to avoid redundant fetches.
 > 3. Create a `.mcp.json` configuration manifest that exposes this local server directly to tooling like Claude Code, allowing it to invoke our workspace analysis tools.
 
@@ -152,7 +152,7 @@ This section provides **phase‑by‑phase tasks and AI‑ready prompts**. Each 
 **Goal:** Deprecate flat relational PostgreSQL layouts and migrate structural facts directly into a topological format.
 
 - **Tasks 1.1, 1.1a, 1.2**: Implemented `scripts/export_postgres_to_jsonl.py` and `scripts/import_jsonl_to_engine.py`.
-- **Tasks 1.3, 1.4, 1.5**: Implemented `src/storage/bitemporal_adapter.py` and `src/storage/graph_engine.py`. Validated via `scripts/compare_legacy_vs_topo.py`.
+- **Tasks 1.3, 1.4, 1.5**: Implemented `code_intel/storage/bitemporal_adapter.py` and `code_intel/storage/graph_engine.py`. Validated via `scripts/compare_legacy_vs_topo.py`.
 
 ---
 
@@ -160,7 +160,7 @@ This section provides **phase‑by‑phase tasks and AI‑ready prompts**. Each 
 
 **Goal:** Establish `codebase-memory-mcp` as an ephemeral, read‑optimized mirror for instant branch navigation.
 
-- **Tasks 2.1, 2.2, 2.3, 2.5**: Implemented `src/cache/memory_cache.py`, `src/cache/cdc_listener.py`, and `src/cache/cache_bootstrap.py`.
+- **Tasks 2.1, 2.2, 2.3, 2.5**: Implemented `code_intel/cache/memory_cache.py`, `code_intel/cache/cdc_listener.py`, and `code_intel/cache/cache_bootstrap.py`.
 
 ---
 
@@ -168,7 +168,7 @@ This section provides **phase‑by‑phase tasks and AI‑ready prompts**. Each 
 
 **Goal:** Expose DAG‑based navigation options across the command line, web clients, and requirements pipelines.
 
-- **Tasks 3.1, 3.2, 3.3**: Updated `src/cli/main.py` and `src/api/server.py` for `--commit`/`commit_sha` support. Integrated **Cytoscape.js** in `ui/src/GraphExplorer.tsx` with a history rail.
+- **Tasks 3.1, 3.2, 3.3**: Updated `code_intel/cli/main.py` and `code_intel/api/server.py` for `--commit`/`commit_sha` support. Integrated **Cytoscape.js** in `ui/code_intel/GraphExplorer.tsx` with a history rail.
 
 ---
 
@@ -176,7 +176,7 @@ This section provides **phase‑by‑phase tasks and AI‑ready prompts**. Each 
 
 **Goal:** Combine structural graph intelligence with vector embeddings via `txtai` for accurate hybrid search.
 
-- **Tasks 4.1, 4.1a, 4.2**: Implemented `src/semantic/indexer.py` and `src/semantic/search.py` using `txtai` and `BAAI/bge-small-en-v1.5`. Updated Python handler to extract docstrings/signatures.
+- **Tasks 4.1, 4.1a, 4.2**: Implemented `code_intel/semantic/indexer.py` and `code_intel/semantic/search.py` using `txtai` and `BAAI/bge-small-en-v1.5`. Updated Python handler to extract docstrings/signatures.
 
 ---
 
@@ -195,7 +195,7 @@ This section provides **phase‑by‑phase tasks and AI‑ready prompts**. Each 
 **Goal:** Deliver deep cross‑system analysis and integrated workspace tools.
 
 - **Multi-Repo Dependency Detection**: Extended TypeScript and Go handlers to detect external imports, unified as `IMPORTS_FROM` edges.
-- **Impact Prediction**: Implemented `ImpactPredictor` in `src/analytics/predictor.py` using historical `modified_in` metadata to calculate structural coupling.
+- **Impact Prediction**: Implemented `ImpactPredictor` in `code_intel/analytics/predictor.py` using historical `modified_in` metadata to calculate structural coupling.
 
 ---
 

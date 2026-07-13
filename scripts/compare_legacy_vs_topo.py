@@ -3,9 +3,9 @@ import os
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 
-from src.core.storage import VersionedStorage
-from src.storage.bitemporal_adapter import BiTemporalAdapter
-from src.storage.graph_engine import SimpleGraphEngine
+from code_intel.core.storage import VersionedStorage
+from code_intel.storage.bitemporal_adapter import BiTemporalAdapter
+from code_intel.storage.graph_engine import SimpleGraphEngine
 
 async def run_comparison():
     DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///test_legacy.db")

@@ -1,5 +1,5 @@
 import pytest
-from src.storage.bitemporal_adapter import BiTemporalAdapter
+from code_intel.storage.bitemporal_adapter import BiTemporalAdapter
 
 class MockEngine:
     def __init__(self, commits, nodes, edges):

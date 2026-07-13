@@ -1,9 +1,9 @@
 import pytest
 from unittest.mock import AsyncMock
-from src.cache.cdc_listener import CDCListener
-from src.cache.cache_bootstrap import CacheBootstrap
-from src.cache.memory_cache import MemoryCache
-from src.storage.graph_engine import SimpleGraphEngine
+from code_intel.cache.cdc_listener import CDCListener
+from code_intel.cache.cache_bootstrap import CacheBootstrap
+from code_intel.cache.memory_cache import MemoryCache
+from code_intel.storage.graph_engine import SimpleGraphEngine
 
 @pytest.mark.asyncio
 async def test_cdc_listener_poll():

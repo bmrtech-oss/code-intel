@@ -11,28 +11,28 @@ class PythonVisitor:
         self.source_text = ""
         # Basic module name from file path
         module_name = os.path.splitext(file_path)[0].replace("\\", ".").replace("/", ".")
-        if module_name.startswith("src."):
+        if module_name.startswith("code_intel."):
             module_name = module_name[4:]
         self.module_name = module_name
 
     async def parse(self):
         with open(self.file_path, "r", encoding="utf-8") as f:
-            src = f.read()
-        self.source_text = src
+            code_intel = f.read()
+        self.source_text = code_intel
         parser = get_parser("python")
-        tree = self._parse_source(parser, src)
+        tree = self._parse_source(parser, code_intel)
         root = tree.root_node() if callable(getattr(tree, "root_node", None)) else tree.root_node
         await self._visit(root)
 
-    def _parse_source(self, parser, src: str):
+    def _parse_source(self, parser, code_intel: str):
         try:
-            return parser.parse(src)
+            return parser.parse(code_intel)
         except TypeError:
             pass
         try:
-            return parser.parse(src.encode("utf-8"))
+            return parser.parse(code_intel.encode("utf-8"))
         except TypeError:
-            source_bytes = src.encode("utf-8")
+            source_bytes = code_intel.encode("utf-8")
             return parser.parse(lambda start, end: source_bytes[start:end])
 
     def _get_fqn(self, name: str) -> str:

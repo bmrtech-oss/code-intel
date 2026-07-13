@@ -163,7 +163,7 @@ Once integrated, you can interact with Claude Code like this:
 
 ## 7. Extending the MCP Server
 
-To add a new tool, modify `src/mcp/server.py`:
+To add a new tool, modify `code_intel/mcp/server.py`:
 
 1. Add a new `types.Tool` definition to the `TOOLS` list.
 2. Add a branch in `handle_call_tool` for the new tool name.

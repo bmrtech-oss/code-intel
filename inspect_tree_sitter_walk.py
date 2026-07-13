@@ -3,8 +3,8 @@ from pathlib import Path
 
 for lang, path in [("python", "tests/golden/python/api.py"), ("typescript", "tests/golden/ts/repository.ts"), ("go", "tests/golden/go/main.go")]:
     parser = get_parser(lang)
-    src = Path(path).read_text(encoding="utf-8")
-    root = parser.parse(src).root_node()
+    code_intel = Path(path).read_text(encoding="utf-8")
+    root = parser.parse(code_intel).root_node()
     print("LANG", lang)
     def walk(node, depth=0):
         if depth > 5:

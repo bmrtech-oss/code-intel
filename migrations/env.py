@@ -6,7 +6,7 @@ from alembic import context
 from sqlalchemy import engine_from_config, pool
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-from src.core.models import Base
+from code_intel.core.models import Base
 
 target_metadata = Base.metadata
 config = context.config

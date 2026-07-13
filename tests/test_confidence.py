@@ -1,7 +1,7 @@
 import pytest
 import os
 from unittest.mock import AsyncMock
-from src.lang.python_handler import PythonVisitor
+from code_intel.lang.python_handler import PythonVisitor
 
 @pytest.mark.asyncio
 async def test_python_confidence():
