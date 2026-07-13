@@ -12,6 +12,12 @@ The easiest way to get started is to run the installer and follow the on-screen 
 ./install.sh
 ```
 
+If you want to skip the interactive flow and use a scripted setup, you can run the installer in CI-style mode with explicit options:
+
+```bash
+CI=1 ./install.sh --skip-venv --tier minimal
+```
+
 ### What happens during installation?
 
 1. **LLM Configuration**: The wizard will ask for an LLM provider.
@@ -51,10 +57,13 @@ After installation, run the strategic demo to ensure everything is working:
 ./demo.sh
 ```
 
-If you are using Google Gemini, you can skip local model checks:
+For a fully non-interactive demo that uses the recommended defaults, run:
+
 ```bash
-./demo.sh --provider google --google-key YOUR_KEY
+./demo.sh --defaults --repo-url=https://github.com/neubig/starter-repo
 ```
+
+The demo will automatically use the OpenRouter provider, the `openai/gpt-oss-120b:free` model, and the API key from `.env` unless you override those values.
 
 ---
 

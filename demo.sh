@@ -10,12 +10,23 @@ RED='\033[0;31m'
 NC='\033[0m'
 
 # --- Configuration & Defaults ---
-DEMO_PROVIDER=${LLM_PROVIDER:-"ollama"}
-DEMO_MODEL=${LLM_MODEL:-"phi3:mini"}
-DEMO_API_KEY=$LLM_API_KEY
-DEMO_GOOGLE_KEY=$GOOGLE_API_KEY
-DEMO_BASE_URL=$LLM_BASE_URL
-REPO_SOURCE="examples/python"
+DEFAULT_PROVIDER="openrouter"
+DEFAULT_MODEL="openai/gpt-oss-120b:free"
+DEFAULT_REPO_URL="https://github.com/neubig/starter-repo"
+DEFAULTS_MODE=false
+
+if [ -f ".env" ]; then
+    set -a
+    source .env
+    set +a
+fi
+
+DEMO_PROVIDER="${DEMO_PROVIDER:-${LLM_PROVIDER:-$DEFAULT_PROVIDER}}"
+DEMO_MODEL="${DEMO_MODEL:-${LLM_MODEL:-$DEFAULT_MODEL}}"
+DEMO_API_KEY="${DEMO_API_KEY:-${LLM_API_KEY:-}}"
+DEMO_GOOGLE_KEY="${DEMO_GOOGLE_KEY:-${GOOGLE_API_KEY:-}}"
+DEMO_BASE_URL="${DEMO_BASE_URL:-${LLM_BASE_URL:-}}"
+REPO_SOURCE="${REPO_SOURCE:-$DEFAULT_REPO_URL}"
 DEMO_VERSION="demo-v1"
 
 # --- Functions ---
@@ -30,27 +41,35 @@ show_help() {
     echo "  --model <name>        LLM Model"
     echo "  --api-key <key>       API Key for OpenRouter"
     echo "  --google-key <key>    API Key for Google Gemini"
-    echo "  --repo-url <url>      Custom Git URL to analyze (default: examples/python)"
+    echo "  --repo-url <url>      Custom Git URL to analyze (default: https://github.com/neubig/starter-repo)"
     echo "  --version-name <name> Version name for analysis (default: demo-v1)"
+    echo "  --defaults            Use default provider/model/repo settings and skip prompts"
     echo "  -h, --help            Show this help message"
 }
 
 # --- Argument Parsing ---
 while [[ $# -gt 0 ]]; do
     case $1 in
+        --provider=*) DEMO_PROVIDER="${1#*=}"; shift ;;
         --provider) DEMO_PROVIDER="$2"; shift 2 ;;
+        --model=*) DEMO_MODEL="${1#*=}"; shift ;;
         --model) DEMO_MODEL="$2"; shift 2 ;;
+        --api-key=*) DEMO_API_KEY="${1#*=}"; shift ;;
         --api-key) DEMO_API_KEY="$2"; shift 2 ;;
+        --google-key=*) DEMO_GOOGLE_KEY="${1#*=}"; shift ;;
         --google-key) DEMO_GOOGLE_KEY="$2"; shift 2 ;;
+        --repo-url=*) REPO_SOURCE="${1#*=}"; shift ;;
         --repo-url) REPO_SOURCE="$2"; shift 2 ;;
+        --version-name=*) DEMO_VERSION="${1#*=}"; shift ;;
         --version-name) DEMO_VERSION="$2"; shift 2 ;;
+        --defaults|--no-interactive) DEFAULTS_MODE=true; shift ;;
         -h|--help) show_help; exit 0 ;;
         *) echo "❌ Unknown option: $1"; show_help; exit 1 ;;
     esac
 done
 
-# If no keys are available, offer to input one
-if [ -z "$DEMO_API_KEY" ] && [ -z "$DEMO_GOOGLE_KEY" ] && [ "$DEMO_PROVIDER" == "ollama" ]; then
+# If no keys are available, offer to input one unless defaults mode was requested.
+if [ "$DEFAULTS_MODE" = false ] && [ -z "$DEMO_API_KEY" ] && [ -z "$DEMO_GOOGLE_KEY" ] && [ "$DEMO_PROVIDER" == "ollama" ]; then
     echo -e "${YELLOW}💡 Optimization Tip:${NC} Using a cloud LLM is much faster than local Ollama."
     echo "   Would you like to provide an API key to speed up Phase 6?"
     echo "   1) OpenRouter"
@@ -76,6 +95,18 @@ if [ -z "$DEMO_API_KEY" ] && [ -z "$DEMO_GOOGLE_KEY" ] && [ "$DEMO_PROVIDER" == 
             DEMO_MODEL=${INPUT_MODEL:-$DEFAULT_MODEL}
         fi
     fi
+fi
+
+export LLM_PROVIDER="$DEMO_PROVIDER"
+export LLM_MODEL="$DEMO_MODEL"
+export LLM_API_KEY="$DEMO_API_KEY"
+export GOOGLE_API_KEY="$DEMO_GOOGLE_KEY"
+
+if [ "$DEFAULTS_MODE" = true ]; then
+    DEMO_PROVIDER="$DEFAULT_PROVIDER"
+    DEMO_MODEL="$DEFAULT_MODEL"
+    REPO_SOURCE="$DEFAULT_REPO_URL"
+    DEMO_VERSION="demo-v1"
 fi
 
 export LLM_PROVIDER="$DEMO_PROVIDER"

@@ -12,6 +12,12 @@ The fastest way to see Code-Intel in action is to run:
 ./demo.sh
 ```
 
+By default, the demo now uses OpenRouter with the `openai/gpt-oss-120b:free` model, analyzes `https://github.com/neubig/starter-repo`, and pulls the API key from `.env` automatically. For a fully non-interactive run, use:
+
+```bash
+./demo.sh --defaults --repo-url=https://github.com/neubig/starter-repo
+```
+
 ### What this demo covers:
 
 1. **📥 Source Ingestion**: Indexes the `examples/python` repository, converting code into structured versioned facts.
@@ -25,7 +31,7 @@ The fastest way to see Code-Intel in action is to run:
 
 ## ⚡ Speeding up the Demo with Cloud LLMs
 
-If you don't want to wait for local Ollama models to download, you can provide a cloud API key directly:
+If you don't want to wait for local Ollama models to download, you can provide a cloud API key directly or rely on the one already configured in `.env`:
 
 ```bash
 # Using Google Gemini (FASTEST)
@@ -33,6 +39,9 @@ If you don't want to wait for local Ollama models to download, you can provide a
 
 # Using OpenRouter
 ./demo.sh --provider openrouter --api-key sk-or-...
+
+# Non-interactive defaults mode
+./demo.sh --defaults --repo-url=https://github.com/neubig/starter-repo
 ```
 
 ---

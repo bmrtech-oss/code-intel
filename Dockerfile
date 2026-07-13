@@ -22,7 +22,8 @@ RUN uv venv /app/.venv && \
         # Remove CPU-only source override for high tier
         sed -i '/\[tool.uv.index\]/,/torch = { index = "pytorch-cpu" }/d' pyproject.toml && \
         uv sync --extra agents --extra semantic --no-cache; \
-    fi
+    fi && \
+    uv pip install --python /app/.venv/bin/python -e .
 
 # --- Final Stage ---
 FROM python:3.11-slim
@@ -45,10 +46,10 @@ COPY prompts/ /app/prompts/
 
 # Environment
 ENV PATH="/app/.venv/bin:$PATH"
-ENV PYTHONPATH=/app
+ENV PYTHONPATH=/app:/app/code_intel
 ENV UV_PROJECT_ENVIRONMENT=/app/.venv
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
-# Use the registered console script for reliability
-CMD ["code-intel", "serve"]
+# Start via the module entry point for more reliable package resolution in containers
+CMD ["python", "-m", "code_intel", "serve"]

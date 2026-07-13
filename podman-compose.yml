@@ -62,14 +62,16 @@ services:
       - PYTHONPATH=/app
 
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
     volumes:
-      - ./code_intel:/app/code_intel
-      - ./data:/app/data
-      - ./prompts:/app/prompts:ro
-    # Explicitly call the main CLI module
-    command: ["code-intel", "serve", "--host", "0.0.0.0", "--port", "8000"]
+      - ./code_intel:/app/code_intel:Z
+      - ./data:/app/data:Z
+      - ./prompts:/app/prompts:ro,Z
+    # Start through the module entry point to avoid console-script import issues
+    command: ["python", "-m", "code_intel", "serve", "--host", "0.0.0.0", "--port", "8000"]
     restart: unless-stopped
 
   worker:
@@ -86,8 +88,10 @@ services:
       - OLLAMA_URL=http://ollama:11434
       - PYTHONPATH=/app
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
     volumes:
       - ./code_intel:/app/code_intel
     # Use rq directly as it is installed in the venv
@@ -108,9 +112,11 @@ services:
       - USE_BITEMPORAL=true
       - PYTHONPATH=/app
     depends_on:
-      - postgres
-      - redis
-    command: ["code-intel", "mcp"]
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    command: ["python", "-m", "code_intel", "mcp"]
     restart: unless-stopped
 
 volumes:

@@ -19,6 +19,7 @@ PURGE=false
 REQUIRED_SPACE_GB=2
 SKIP_VENV=false
 PERFORMANCE_TIER="minimal"
+TIER_PROVIDED=false
 
 # --- Functions ---
 log_info() { echo -e "${BLUE}info:${NC} $1"; }
@@ -57,6 +58,17 @@ check_port() {
     return 0
 }
 
+service_container_running() {
+    local name=$1
+    if command -v podman >/dev/null 2>&1; then
+        podman ps --format '{{.Names}}' 2>/dev/null | grep -Fxq "$name" && return 0
+    fi
+    if command -v docker >/dev/null 2>&1; then
+        docker ps --format '{{.Names}}' 2>/dev/null | grep -Fxq "$name" && return 0
+    fi
+    return 1
+}
+
 # --- Argument Parsing ---
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -66,7 +78,7 @@ while [[ $# -gt 0 ]]; do
         -d|--debug) DEBUG=true; shift ;;
         -p|--purge) PURGE=true; shift ;;
         --skip-venv) SKIP_VENV=true; shift ;;
-        --tier) PERFORMANCE_TIER="$2"; shift 2 ;;
+        --tier) PERFORMANCE_TIER="$2"; TIER_PROVIDED=true; shift 2 ;;
         -h|--help) show_help; exit 0 ;;
         *) log_error "Unknown option: $1"; show_help; exit 1 ;;
     esac
@@ -165,26 +177,61 @@ if [ "$SHOULD_PROMPT" = true ]; then
 fi
 
 # 3. Performance Tier Selection
-echo ""
-echo -e "${CYAN}⚡ Performance & Feature Tier${NC}"
-echo "--------------------------"
-echo "1) Minimal  (~600MB image) - Graph only. No Semantic Search."
-echo "2) Standard (~2.5GB image) - Semantic Search enabled (CPU optimized)."
-echo "3) High     (~7GB image)   - Semantic Search enabled (Nvidia CUDA accelerated)."
-if [ -t 0 ]; then read -p "Selection (1/2/3): " -n 1 -r TIER_CHOICE; echo ""; else read -r TIER_CHOICE; fi
-
-case "$TIER_CHOICE" in
-    2) PERFORMANCE_TIER="standard" ;;
-    3) PERFORMANCE_TIER="high" ;;
-    *) PERFORMANCE_TIER="minimal" ;;
+case "$PERFORMANCE_TIER" in
+    standard|high|minimal)
+        ;;
+    *)
+        log_error "Invalid tier '$PERFORMANCE_TIER'. Expected one of: minimal, standard, high"
+        exit 1
+        ;;
 esac
+
+if [ "$TIER_PROVIDED" = false ] && [ -z "${CI:-}" ] && [ -t 0 ]; then
+    echo ""
+    echo -e "${CYAN}⚡ Performance & Feature Tier${NC}"
+    echo "--------------------------"
+    echo "1) Minimal  (~600MB image) - Graph only. No Semantic Search."
+    echo "2) Standard (~2.5GB image) - Semantic Search enabled (CPU optimized)."
+    echo "3) High     (~7GB image)   - Semantic Search enabled (Nvidia CUDA accelerated)."
+    read -p "Selection (1/2/3): " -n 1 -r TIER_CHOICE
+    echo ""
+
+    case "$TIER_CHOICE" in
+        2) PERFORMANCE_TIER="standard" ;;
+        3) PERFORMANCE_TIER="high" ;;
+        *) PERFORMANCE_TIER="minimal" ;;
+    esac
+else
+    echo "Using requested performance tier: $PERFORMANCE_TIER"
+fi
 
 # 4. Port Conflict Check
 log_info "Checking for port conflicts..."
 CONFLICT=false
-check_port 8000 "API" || CONFLICT=true
-check_port 5432 "Postgres" || CONFLICT=true
-check_port 6379 "Redis" || CONFLICT=true
+API_RUNNING=false
+POSTGRES_RUNNING=false
+REDIS_RUNNING=false
+
+if service_container_running codeintel-api; then
+    API_RUNNING=true
+    log_info "API container is already running; skipping API port check."
+else
+    check_port 8000 "API" || CONFLICT=true
+fi
+
+if service_container_running codeintel-postgres; then
+    POSTGRES_RUNNING=true
+    log_info "Postgres container is already running; skipping Postgres port check."
+else
+    check_port 5432 "Postgres" || CONFLICT=true
+fi
+
+if service_container_running codeintel-redis; then
+    REDIS_RUNNING=true
+    log_info "Redis container is already running; skipping Redis port check."
+else
+    check_port 6379 "Redis" || CONFLICT=true
+fi
 
 FINAL_PROVIDER=$(grep "^LLM_PROVIDER=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2 | tr -d '"' || echo "ollama")
 if [ "$FINAL_PROVIDER" == "ollama" ]; then
@@ -241,18 +288,71 @@ else
 fi
 
 # 7. Start Infrastructure
-log_info "Starting containers..."
-UP_FLAGS="-d --build"
-[ "$DEBUG" = true ] && UP_FLAGS="--build"
+if [ "$API_RUNNING" = true ] && [ "$POSTGRES_RUNNING" = true ]; then
+    log_info "Existing Code-Intel containers detected; reusing the running stack."
+else
+    log_info "Starting core services..."
+    export CODEINTEL_TIER="$PERFORMANCE_TIER"
 
-COMPOSE_PROFILES=""
-if [ "$FINAL_PROVIDER" == "ollama" ]; then
-    COMPOSE_PROFILES="--profile ollama"
-fi
+    COMPOSE_PROFILES=""
+    if [ "$FINAL_PROVIDER" == "ollama" ]; then
+        COMPOSE_PROFILES="--profile ollama"
+    fi
 
-export CODEINTEL_TIER="$PERFORMANCE_TIER"
-if ! $COMPOSE_CMD $COMPOSE_PROFILES --env-file "$ENV_FILE" up $UP_FLAGS; then
-    log_error "Failed to start containers. Check disk space or logs."; exit 1
+    if ! $COMPOSE_CMD $COMPOSE_PROFILES --env-file "$ENV_FILE" up -d --build postgres redis; then
+        log_error "Failed to start Postgres/Redis. Check disk space or logs."; exit 1
+    fi
+
+    log_info "Waiting for Postgres to become ready..."
+    COUNT=0
+    while [ $COUNT -lt 60 ]; do
+        if $COMPOSE_CMD exec -i postgres pg_isready -U postgres >/dev/null 2>&1; then
+            break
+        fi
+        sleep 5; COUNT=$((COUNT + 1))
+    done
+
+    if [ $COUNT -eq 60 ]; then
+        log_error "Postgres did not become ready in time."
+        $COMPOSE_CMD logs postgres | tail -n 20
+        exit 1
+    fi
+
+    log_info "Waiting for Redis to become ready..."
+    COUNT=0
+    while [ $COUNT -lt 60 ]; do
+        if $COMPOSE_CMD exec -i redis redis-cli ping >/dev/null 2>&1; then
+            break
+        fi
+        sleep 5; COUNT=$((COUNT + 1))
+    done
+
+    if [ $COUNT -eq 60 ]; then
+        log_error "Redis did not become ready in time."
+        $COMPOSE_CMD logs redis | tail -n 20
+        exit 1
+    fi
+
+    if ! $COMPOSE_CMD $COMPOSE_PROFILES --env-file "$ENV_FILE" up -d --build api worker; then
+        log_error "Failed to start API/worker. Check disk space or logs."; exit 1
+    fi
+
+    for container in codeintel-api codeintel-worker; do
+        if podman ps -a --format '{{.Names}} {{.Status}}' 2>/dev/null | grep -Fxq "$container created"; then
+            log_info "Starting $container from Created state..."
+            podman start "$container" >/dev/null 2>&1 || true
+        fi
+    done
+
+    if podman ps --filter name=codeintel-worker --format '{{.Status}}' 2>/dev/null | grep -q '^Up'; then
+        log_success "Worker container is running."
+    fi
+
+    if [ "$FINAL_PROVIDER" == "ollama" ]; then
+        if ! $COMPOSE_CMD $COMPOSE_PROFILES --env-file "$ENV_FILE" up -d --build ollama; then
+            log_error "Failed to start Ollama. Check disk space or logs."; exit 1
+        fi
+    fi
 fi
 
 [ "$DEBUG" = true ] && exit 0
@@ -260,33 +360,36 @@ fi
 # 8. Wait for API
 echo ""
 log_info "Waiting for services to initialize..."
-MAX_RETRIES=60; COUNT=0
-until timeout 10s $COMPOSE_CMD exec -i api python -c "import sqlalchemy; print('API Ready')" > /dev/null 2>&1 || [ $COUNT -eq $MAX_RETRIES ]; do
-  if [[ "$COMPOSE_CMD" == "docker compose" ]]; then
-      STATUSES=$(timeout 5s $COMPOSE_CMD ps --format "{{.Service}} [{{.Status}}]" 2>/dev/null | tr '\n' ', ' | sed 's/, $//')
-      echo -ne "\r   [${COUNT}/${MAX_RETRIES}] Status: ${CYAN}${STATUSES}${NC}   "
-  else
-      echo -ne "\r   [${COUNT}/${MAX_RETRIES}] Waiting for API...   "
-  fi
-  sleep 5; COUNT=$((COUNT + 1))
+MAX_RETRIES=30; COUNT=0
+while [ $COUNT -lt $MAX_RETRIES ]; do
+    if $COMPOSE_CMD exec api python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/docs', timeout=2).read(); print('API Ready')" > /dev/null 2>&1; then
+        break
+    fi
+
+    echo -ne "\r   [${COUNT}/${MAX_RETRIES}] Waiting for API to respond on port 8000...   "
+    sleep 5; COUNT=$((COUNT + 1))
 done
 echo ""
 
-if [ $COUNT -eq $MAX_RETRIES ]; then
-    log_error "API service failed to start."
+if ! $COMPOSE_CMD exec api python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/docs', timeout=2).read(); print('API Ready')" > /dev/null 2>&1; then
+    log_error "API did not become ready in time."
+    log_info "Container status:"
+    $COMPOSE_CMD ps || true
     log_info "Last 20 lines of API logs:"
-    $COMPOSE_CMD logs api | tail -n 20
+    $COMPOSE_CMD logs api | tail -n 20 || true
     exit 1
 fi
 
-$COMPOSE_CMD exec -i api alembic upgrade head
-./scripts/setup-agent.sh
+log_success "API is responding on port 8000."
+
+$COMPOSE_CMD exec api alembic upgrade head || true
+./scripts/setup-agent.sh || true
 
 # 9. Model Pull
 if [ "$FINAL_PROVIDER" == "ollama" ] && [ "$SKIP_MODELS" = false ]; then
     MODEL=$(grep "^LLM_MODEL=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2 | tr -d '"' || echo "phi3:mini")
     log_info "Pulling Ollama model ($MODEL)..."
-    $COMPOSE_CMD exec -i ollama ollama pull "$MODEL"
+    $COMPOSE_CMD exec ollama ollama pull "$MODEL"
 fi
 
 echo ""
@@ -310,7 +413,12 @@ echo "2) Analyze your own Git Repository (GitHub/GitLab URL)"
 echo "3) Exit and explore later"
 echo ""
 
-if [ -t 0 ]; then read -p "Selection (1/2/3): " -n 1 -r NEXT_STEP; echo ""; else read -r NEXT_STEP; fi
+if [ -t 0 ]; then
+    read -p "Selection (1/2/3): " -n 1 -r NEXT_STEP
+    echo ""
+else
+    NEXT_STEP=1
+fi
 
 case "$NEXT_STEP" in
     1) ./demo.sh ;;
