@@ -86,7 +86,7 @@ Understand what breaks when you change something.
 **Example GQL Query:**
 
 ```sql
-FIND function calculateInterest
+FIND function calculateInterest 
 TRAVERSE CALLS DEPTH 3
 PATH FROM function calculateInterest TO function auditLog
 ```
@@ -187,23 +187,23 @@ Get data-driven insights into codebase quality.
 Give your LLM tools accurate, up-to-date code intelligence.
 
 - **MCP Server** — Model Context Protocol integration with **6 reasoning tools**:
-
+  
   1. `explain_relationship` — Understand connections between symbols
-
+  
   2. `pr_impact` — Analyze what a PR would affect
-
+  
   3. `similar_symbols` — Find semantically related code
-
+  
   4. `health_report` — Get codebase health metrics
-
+  
   5. `suggest_tests` — Recommend tests for untested code
-
+  
   6. `cluster_summary` — Summarize groups of similar code
-
+  
 - **MCP tool-chaining hints** and pagination for complex workflows.
-
+  
 - **10+ built-in prompt examples** for agentic workflows.
-
+  
 
 **Example Agentic Workflow:**
 
