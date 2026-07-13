@@ -1,7 +1,7 @@
 import asyncio
 import sys
 from sqlalchemy import text
-from src.core.storage import VersionedStorage, AsyncSessionLocal
+from code_intel.core.storage import VersionedStorage, AsyncSessionLocal
 
 async def rebuild_all_versions():
     async with AsyncSessionLocal() as session:

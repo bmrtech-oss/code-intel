@@ -5,8 +5,8 @@ import shutil
 # Skip all tests in this module if txtai is not installed
 txtai = pytest.importorskip("txtai")
 
-from src.semantic.indexer import SemanticIndexer
-from src.semantic.search import SemanticSearch
+from code_intel.semantic.indexer import SemanticIndexer
+from code_intel.semantic.search import SemanticSearch
 
 @pytest.mark.asyncio
 async def test_semantic_indexing_and_search():

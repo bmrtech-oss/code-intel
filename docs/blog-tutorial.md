@@ -40,7 +40,7 @@ uv sync
 podman-compose up -d
 
 # Ingest your repository
-uv run python -m src.cli.main analyze examples/python --version v1
+uv run python -m code_intel.cli.main analyze examples/python --version v1
 ```
 
 ### 2. The Magic of Time Travel: Dead Code Detection
@@ -50,7 +50,7 @@ Let's find "dead code" (functions that are defined but never called) in our Pyth
 **Scenario:** Our `app.py` has a `used_function` and a `dead_function`. Only `used_function` is called in the `if __name__ == "__main__":` block.
 
 ```bash
-uv run python -m src.cli.main query dead_code --commit v1
+uv run python -m code_intel.cli.main query dead_code --commit v1
 ```
 
 **Expected Output (JSON):**

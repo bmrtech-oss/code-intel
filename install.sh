@@ -83,8 +83,8 @@ echo -e "${CYAN}🚀 Starting Code-Intel One-Click Installation...${NC}"
 
 # 1. Package Structure Fix
 log_info "Verifying package structure..."
-# Ensure ALL subdirectories in src have __init__.py for proper module resolution in containers
-find src -type d -not -path '*/.*' -not -path '*/__pycache__*' | while read d; do
+# Ensure ALL subdirectories in code_intel have __init__.py for proper module resolution in containers
+find code_intel -type d -not -path '*/.*' -not -path '*/__pycache__*' | while read d; do
   touch "$d/__init__.py"
 done
 

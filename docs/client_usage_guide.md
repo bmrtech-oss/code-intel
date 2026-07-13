@@ -13,7 +13,7 @@ Expose the server using a `.mcp.json` or by adding it to your Claude Desktop con
   "mcpServers": {
     "code-intel": {
       "command": "uv",
-      "args": ["run", "python", "-m", "src.cli.main", "mcp"],
+      "args": ["run", "python", "-m", "code_intel.cli.main", "mcp"],
       "env": {
         "DATABASE_URL": "postgresql+asyncpg://...",
         "USE_BITEMPORAL": "true"

@@ -6,7 +6,7 @@
         "run",
         "python",
         "-m",
-        "src.cli.main",
+        "code_intel.cli.main",
         "mcp"
       ],
       "env": {

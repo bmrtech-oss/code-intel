@@ -65,7 +65,7 @@ services:
       - postgres
       - redis
     volumes:
-      - ./src:/app/src
+      - ./code_intel:/app/code_intel
       - ./data:/app/data
       - ./prompts:/app/prompts:ro
     # Explicitly call the main CLI module
@@ -89,7 +89,7 @@ services:
       - postgres
       - redis
     volumes:
-      - ./src:/app/src
+      - ./code_intel:/app/code_intel
     # Use rq directly as it is installed in the venv
     command: ["rq", "worker", "ingestion", "llm"]
     restart: unless-stopped

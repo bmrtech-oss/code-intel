@@ -1,71 +1,54 @@
 from tree_sitter_language_pack import get_parser
 from ..core.storage import VersionedStorage
+import os
 
-class GoVisitor:
+class TypeScriptVisitor:
     def __init__(self, storage: VersionedStorage, file_path: str, version: str):
         self.storage = storage
         self.file_path = file_path
         self.version = version
-        self.package_name = ""
         self.current_scope = []
         self.source_text = ""
+        # Basic module name from file path
+        module_name = os.path.splitext(file_path)[0].replace("\\", ".").replace("/", ".")
+        if module_name.startswith("code_intel."):
+            module_name = module_name[4:]
+        self.module_name = module_name
 
     async def parse(self):
         with open(self.file_path, "r", encoding="utf-8") as f:
-            src = f.read()
-        self.source_text = src
-        parser = get_parser("go")
-        tree = self._parse_source(parser, src)
+            code_intel = f.read()
+        self.source_text = code_intel
+        parser = get_parser("typescript")
+        tree = self._parse_source(parser, code_intel)
         root = tree.root_node() if callable(getattr(tree, "root_node", None)) else tree.root_node
-        # First pass to find package name
-        self._find_package(root)
         await self._visit(root)
 
-    def _parse_source(self, parser, src: str):
+    def _parse_source(self, parser, code_intel: str):
         try:
-            return parser.parse(src)
+            return parser.parse(code_intel)
         except TypeError:
             pass
         try:
-            return parser.parse(src.encode("utf-8"))
+            return parser.parse(code_intel.encode("utf-8"))
         except TypeError:
-            source_bytes = src.encode("utf-8")
+            source_bytes = code_intel.encode("utf-8")
             return parser.parse(lambda start, end: source_bytes[start:end])
 
-    def _find_package(self, node):
-        if self._node_kind(node) == "package_clause":
-            for child in self._iter_children(node):
-                if self._node_kind(child) == "package_identifier":
-                    self.package_name = self._node_text(child)
-                    return
-        for child in self._iter_children(node):
-            self._find_package(child)
-            if self.package_name:
-                break
-
     def _get_fqn(self, name: str) -> str:
-        prefix = self.package_name
-        if self.current_scope:
-            prefix = f"{prefix}.{'.'.join(self.current_scope)}"
-        return f"{prefix}.{name}"
+        if not self.current_scope:
+            return f"{self.module_name}.{name}"
+        return f"{self.module_name}.{'.'.join(self.current_scope)}.{name}"
 
     async def _visit(self, node):
         kind = self._node_kind(node)
-        if kind == "type_spec":
-            name_node = self._find_child_by_kind(node, "type_identifier") or self._find_child_by_kind(node, "identifier")
+        if kind == "class_declaration":
+            name_node = node.child_by_field_name("name") or self._find_child_by_kind(node, "type_identifier") or self._find_child_by_kind(node, "identifier")
             if name_node:
                 name = self._node_text(name_node)
                 fqn = self._get_fqn(name)
                 line = self._node_line(name_node)
-                await self.storage.insert_symbol(self.file_path, fqn, "type", line, self.version)
-
-        elif kind == "function_declaration":
-            name_node = self._find_child_by_kind(node, "identifier")
-            if name_node:
-                name = self._node_text(name_node)
-                fqn = self._get_fqn(name)
-                line = self._node_line(name_node)
-                await self.storage.insert_symbol(self.file_path, fqn, "function", line, self.version)
+                await self.storage.insert_symbol(self.file_path, fqn, "class", line, self.version)
 
                 self.current_scope.append(name)
                 for child in self._iter_children(node):
@@ -73,21 +56,16 @@ class GoVisitor:
                 self.current_scope.pop()
                 return
 
-        elif kind == "method_declaration":
-            name_node = self._find_child_by_kind(node, "field_identifier") or self._find_child_by_kind(node, "identifier")
-            receiver_node = node.child_by_field_name("receiver")
-            receiver_type = ""
-            if receiver_node:
-                receiver_text = self._node_text(receiver_node)
-                receiver_type = receiver_text.split()[-1].strip("*()")
-
+        elif kind == "function_declaration" or kind == "method_definition":
+            name_node = node.child_by_field_name("name") or self._find_child_by_kind(node, "property_identifier") or self._find_child_by_kind(node, "identifier")
             if name_node:
                 name = self._node_text(name_node)
-                fqn = f"{self.package_name}.{receiver_type}.{name}" if receiver_type else self._get_fqn(name)
+                fqn = self._get_fqn(name)
                 line = self._node_line(name_node)
-                await self.storage.insert_symbol(self.file_path, fqn, "method", line, self.version)
+                kind_name = "method" if kind == "method_definition" else "function"
+                await self.storage.insert_symbol(self.file_path, fqn, kind_name, line, self.version)
 
-                self.current_scope.append(f"{receiver_type}.{name}" if receiver_type else name)
+                self.current_scope.append(name)
                 for child in self._iter_children(node):
                     await self._visit(child)
                 self.current_scope.pop()
@@ -97,20 +75,30 @@ class GoVisitor:
             function_node = node.child_by_field_name("function")
             if function_node:
                 callee = self._node_text(function_node)
-                caller = ".".join([self.package_name] + self.current_scope)
-                await self.storage.insert_call(caller, callee, 1.0, self.version)
+                caller = ".".join([self.module_name] + self.current_scope)
+                
+                confidence = 1.0
+                fn_kind = self._node_kind(function_node)
+                
+                # Member expressions are often polymorphic in TS
+                if fn_kind == "member_expression":
+                    confidence = 0.5
+                # Dynamic calls (eval is common, though discouraged)
+                elif callee in ("eval", "Function"):
+                    confidence = 0.3
+                
+                await self.storage.insert_call(caller, callee, confidence, self.version)
 
-                if self._node_kind(function_node) == "selector_expression":
+                if fn_kind == "member_expression":
                     await self.storage.insert_fact("dynamic_call", f"{caller}->{callee}", "type", "cross-file-candidate", self.version)
 
-        elif kind == "import_spec":
-            path_node = node.child_by_field_name("path")
-            if path_node:
-                import_path = self._node_text(path_node).strip("'\"")
-                # Cross-repo Go imports typically contain a dot (e.g., github.com/...)
-                if "." in import_path:
-                    caller = ".".join([self.package_name] + self.current_scope)
-                    await self.storage.insert_fact("cross_repo_import", f"{caller}->{import_path}", "module", import_path, self.version)
+        elif kind == "import_statement":
+            source_node = node.child_by_field_name("source")
+            if source_node:
+                module_path = self._node_text(source_node).strip("'\"")
+                if not module_path.startswith("./") and not module_path.startswith("../"):
+                    caller = ".".join([self.module_name] + self.current_scope)
+                    await self.storage.insert_cross_repo_import(caller, module_path, self.version)
 
         for child in self._iter_children(node):
             await self._visit(child)

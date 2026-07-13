@@ -60,7 +60,7 @@ class FileBasedHandler(ModelHandler):
                     return json.loads(match.group())
                 except json.JSONDecodeError:
                     pass
-            
+
             logging.warning(f"JSON parsing failed. Trying json_repair. Raw: {raw_response[:100]}...")
             try:
                 from json_repair import repair_json
@@ -68,7 +68,7 @@ class FileBasedHandler(ModelHandler):
                 return json.loads(repaired)
             except Exception as e:
                 logging.error(f"json_repair also failed: {e}")
-            
+
             return {"raw": raw_response, "error": "Could not parse JSON"}
 
 # Factory mapping model name patterns to prompt file names
@@ -165,7 +165,7 @@ class LLMUDF:
             raw_text = await loop.run_in_executor(None, _gen)
 
         parsed = self.handler.parse_response(raw_text)
-        
+
         # Explicit validation
         if "error" not in parsed:
             try:
@@ -173,12 +173,12 @@ class LLMUDF:
             except Exception as e:
                 logging.error(f"Pydantic validation failed: {e}")
                 parsed["error"] = f"Validation failed: {str(e)}"
-        
+
         # Grounding fact IDs
         grounded_in = [s["id"] for s in symbols if "id" in s] + [c["id"] for c in calls if "id" in c]
-        
+
         is_verified, confidence = self.validate_artifact(parsed, symbols, calls)
-        
+
         return {
             "result": parsed,
             "provenance": {
@@ -193,7 +193,7 @@ class LLMUDF:
     def validate_artifact(self, artifact: Dict[str, Any], symbols: List[Dict], calls: List[Dict]) -> Tuple[bool, float]:
         if not isinstance(artifact, dict) or "tasks" not in artifact:
             return True, 1.0
-            
+
         all_symbol_ids = {str(s.get("id")) for s in symbols}
         all_symbol_ids.update({str(s.get("symbol_id")) for s in symbols})
 

@@ -21,8 +21,8 @@ fi
 # Check if code-intel is installed
 if ! command -v code-intel &> /dev/null; then
     echo "⚠️ 'code-intel' command not found. Attempting to run via 'uv run'..."
-    uv run python -m src.cli.main setup-claude
-    uv run python -m src.cli.main setup-cursor
+    uv run python -m code_intel.cli.main setup-claude
+    uv run python -m code_intel.cli.main setup-cursor
 else
     echo "🔄 Running setup via global CLI..."
     code-intel setup-claude

@@ -9,9 +9,9 @@ class CSharpVisitor:
 
     async def parse(self):
         with open(self.file_path, "rb") as f:
-            src = f.read()
+            code_intel = f.read()
         parser = get_parser("csharp")
-        tree = parser.parse(src)
+        tree = parser.parse(code_intel)
         await self._visit(tree.root_node)
 
     async def _visit(self, node):

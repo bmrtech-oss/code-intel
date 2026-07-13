@@ -5,22 +5,22 @@ import importlib
 def verify():
     print("--- Package Structure Verification ---")
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    src_dir = os.path.join(base_dir, "src")
+    src_dir = os.path.join(base_dir, "code_intel")
 
     # Dirs that MUST have __init__.py
     required_pkgs = [
-        "src",
-        "src/api",
-        "src/utils",
-        "src/core",
-        "src/mcp",
-        "src/cli",
-        "src/analytics",
-        "src/storage",
-        "src/semantic",
-        "src/lang",
-        "src/worker",
-        "src/cache"
+        "code_intel",
+        "code_intel/api",
+        "code_intel/utils",
+        "code_intel/core",
+        "code_intel/mcp",
+        "code_intel/cli",
+        "code_intel/analytics",
+        "code_intel/storage",
+        "code_intel/semantic",
+        "code_intel/lang",
+        "code_intel/worker",
+        "code_intel/cache"
     ]
 
     all_passed = True
@@ -33,16 +33,16 @@ def verify():
             all_passed = False
 
     print("\n--- Import Verification ---")
-    # Add src to path just in case we are running outside uv/venv
+    # Add code_intel to path just in case we are running outside uv/venv
     if src_dir not in sys.path:
         sys.path.insert(0, src_dir)
 
     modules_to_test = [
-        "src",
-        "src.cli.main",
-        "src.api.server",
-        "src.core.storage",
-        "src.core.ingestion"
+        "code_intel",
+        "code_intel.cli.main",
+        "code_intel.api.server",
+        "code_intel.core.storage",
+        "code_intel.core.ingestion"
     ]
 
     for mod_name in modules_to_test:

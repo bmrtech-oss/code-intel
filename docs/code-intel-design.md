@@ -156,7 +156,7 @@ Instead of a rigid graph schema, we store **atomic facts** versioned by commit S
 |-------------|-----------|-----------|-------|---------------|------------|
 | symbol | function:validate | name | validate | abc123 | NULL |
 | symbol | function:validate | kind | function | abc123 | NULL |
-| symbol | function:validate | file | src/auth.py | abc123 | NULL |
+| symbol | function:validate | file | code_intel/auth.py | abc123 | NULL |
 | call | call:validate->check | caller | function:validate | abc123 | NULL |
 | call | call:validate->check | callee | function:check | abc123 | NULL |
 | call | call:validate->check | confidence | 1.0 | abc123 | NULL |
@@ -251,7 +251,7 @@ Because we use **tree-sitter** and a **visitor pattern**, adding a new language 
 uv add tree-sitter-go
 ```
 
-### 4.2 Create a language handler (`src/lang/go_handler.py`)
+### 4.2 Create a language handler (`code_intel/lang/go_handler.py`)
 
 ```python
 import tree_sitter_go as ts_go

@@ -10,7 +10,7 @@ RUN apt-get update && \
 
 RUN pip install --no-cache-dir uv
 COPY pyproject.toml README.md uv.lock ./
-COPY src/ /app/src/
+COPY code_intel/ /app/code_intel/
 
 # Conditional sync based on TIER
 RUN uv venv /app/.venv && \
@@ -40,7 +40,7 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 # Copy code
-COPY src/ /app/src/
+COPY code_intel/ /app/code_intel/
 COPY prompts/ /app/prompts/
 
 # Environment

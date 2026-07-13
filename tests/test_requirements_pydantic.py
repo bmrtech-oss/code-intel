@@ -1,7 +1,7 @@
 import pytest
 import json
 from unittest.mock import AsyncMock, MagicMock
-from src.core.udf import LLMUDF, RequirementResponse
+from code_intel.core.udf import LLMUDF, RequirementResponse
 
 @pytest.mark.asyncio
 async def test_generate_requirements_validation():

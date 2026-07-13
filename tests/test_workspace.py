@@ -1,5 +1,5 @@
 import pytest
-from src.core.workspace import WorkspaceManager
+from code_intel.core.workspace import WorkspaceManager
 
 # Skip tests if Redis is not available
 REDIS_AVAILABLE = False # Default to False, will try to check

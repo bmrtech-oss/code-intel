@@ -4,17 +4,17 @@ This document captures the current Phase 0.5 foundation work for the local MCP s
 
 ## What is included
 
-- A Git-aware MCP server entrypoint in `src/mcp/server.py`
+- A Git-aware MCP server entrypoint in `code_intel/mcp/server.py`
 - A `get_workspace_info` tool that reads the active workspace session and Git state
-- A three-panel UI shell in [ui/src/App.tsx](../ui/src/App.tsx) with **Cytoscape.js** graph visualization.
+- A three-panel UI shell in [ui/code_intel/App.tsx](../ui/code_intel/App.tsx) with **Cytoscape.js** graph visualization.
 - **Timeline Travel**: A history rail for instant navigation between commit SHAs.
-- Zustand-backed workspace state in [ui/src/store/workspaceStore.ts](../ui/src/store/workspaceStore.ts).
+- Zustand-backed workspace state in [ui/code_intel/store/workspaceStore.ts](../ui/code_intel/store/workspaceStore.ts).
 - A local MCP manifest in [.mcp.json](../.mcp.json) for Claude Code and other MCP-compatible tools
 
 ## Run the MCP server
 
 ```bash
-uv run python -m src.cli.main mcp
+uv run python -m code_intel.cli.main mcp
 ```
 
 The server exposes tools such as `query_call_graph`, `query_dead_code`, `query_impact`, `semantic_search`, and `get_workspace_info`.
