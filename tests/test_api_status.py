@@ -214,6 +214,25 @@ def test_get_repo_tree():
     finally:
         app.dependency_overrides.clear()
 
+def test_path_traversal_protection():
+    client = TestClient(app)
+
+    # Unsafe path should be rejected with 400
+    response = client.get("/repo/branches-and-commits?repo_path=/etc/passwd")
+    assert response.status_code == 400
+    assert "unauthorized" in response.json()["detail"].lower()
+
+    # Relative directory traversal should be rejected with 400
+    response2 = client.get("/repo/branches-and-commits?repo_path=../../some_secret_file")
+    assert response2.status_code == 400
+    assert "unauthorized" in response2.json()["detail"].lower()
+
+    # Safe path (like temporary directory) should be accepted and return 200
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmpdir:
+        response3 = client.get(f"/repo/branches-and-commits?repo_path={tmpdir}")
+        assert response3.status_code == 200
+
 def test_get_graph_file_level():
     client = TestClient(app)
 

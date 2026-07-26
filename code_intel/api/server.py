@@ -37,6 +37,33 @@ def is_git_url(path: str) -> bool:
     """Check if the path is a Git repository URL."""
     return bool(re.match(r'^(https?://|git@)', path))
 
+def is_safe_path(path: str) -> bool:
+    """Check if the resolved path is within permitted directories."""
+    try:
+        import tempfile
+        # Resolve real absolute path
+        abs_path = os.path.abspath(path)
+        real_path = os.path.realpath(abs_path)
+
+        # Safe root directories
+        safe_roots = [
+            os.path.realpath(os.getcwd()),
+            os.path.realpath(tempfile.gettempdir()),
+            "/repo",
+            "/shared"
+        ]
+
+        for root in safe_roots:
+            try:
+                common_prefix = os.path.commonpath([real_path, root])
+                if common_prefix == root:
+                    return True
+            except ValueError:
+                continue
+        return False
+    except Exception:
+        return False
+
 def extract_json(text: str):
     # With Ollama grammar, we expect valid JSON directly.
     try:
@@ -128,6 +155,11 @@ class LLMConfigRequest(BaseModel):
 @app.post("/analyze")
 async def analyze(req: AnalyzeRequest, background_tasks: BackgroundTasks, db: AsyncSession = Depends(get_db)):
     from ..settings import USE_TEMPORAL
+
+    # Path Traversal Security check
+    if not is_git_url(req.repo_path) and not is_safe_path(req.repo_path):
+        raise HTTPException(status_code=400, detail="Invalid or unauthorized repository path")
+
     version = req.version or str(int(datetime.utcnow().timestamp()))
     actual_path = req.repo_path
     temp_handler = None
@@ -218,6 +250,10 @@ async def analyze_stream(job_id: str):
 
 @app.get("/repo/branches-and-commits")
 async def get_branches_and_commits(repo_path: str, workspace_id: Optional[str] = None):
+    # Path Traversal Security check
+    if not is_git_url(repo_path) and not is_safe_path(repo_path):
+        raise HTTPException(status_code=400, detail="Invalid or unauthorized repository path")
+
     import git
     from datetime import datetime
     from ..core.git_handler import GitRepoHandler
