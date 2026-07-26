@@ -54,7 +54,7 @@ def run_ingestion(repo_path: str, version: str, is_git_url: bool = False, branch
         if temp_handler:
             temp_handler.cleanup()
 
-async def _generate_requirements_task(version: str):
+async def _generate_requirements_task(version: str, session_id: str = "default"):
     from ..core.udf import LLMUDF
     import json
     from sqlalchemy import text
@@ -76,7 +76,7 @@ async def _generate_requirements_task(version: str):
             WHERE c.version = :v AND f.valid_to IS NULL
         """, {"v": version})
         
-        udf = LLMUDF()
+        udf = LLMUDF(session_id=session_id)
         response = await udf.generate_requirements(symbols, calls)
         req_json = response["result"]
         provenance = response["provenance"]
@@ -118,8 +118,8 @@ async def _generate_requirements_task(version: str):
             "provenance": provenance
         }
 
-def generate_requirements_task(version: str):
-    return asyncio.run(_generate_requirements_task(version))
+def generate_requirements_task(version: str, session_id: str = "default"):
+    return asyncio.run(_generate_requirements_task(version, session_id=session_id))
 
 # --- Temporal Implementation ---
 

@@ -119,6 +119,12 @@ class QueryRequest(BaseModel):
     symbol: Optional[str] = None
     depth: Optional[int] = 3
 
+class LLMConfigRequest(BaseModel):
+    provider: str
+    model: str
+    api_key: str
+    session_id: Optional[str] = "default"
+
 @app.post("/analyze")
 async def analyze(req: AnalyzeRequest, background_tasks: BackgroundTasks, db: AsyncSession = Depends(get_db)):
     from ..settings import USE_TEMPORAL
@@ -157,6 +163,26 @@ async def status(job_id: str):
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     return {"job_id": job_id, "status": job.get_status(), "result": job.result if job.is_finished else None}
+
+@app.post("/config/llm")
+async def config_llm(req: LLMConfigRequest):
+    from redis import Redis
+    from ..settings import REDIS_HOST, REDIS_PORT
+    import json
+
+    session_id = req.session_id or "default"
+    try:
+        r = Redis(host=REDIS_HOST, port=REDIS_PORT)
+        config_data = {
+            "provider": req.provider,
+            "model": req.model,
+            "api_key": req.api_key
+        }
+        r.setex(f"llm_config:{session_id}", 3600, json.dumps(config_data))
+    except Exception:
+        raise HTTPException(status_code=500, detail="Failed to save LLM configuration in memory cache")
+
+    return {"status": "success", "message": "LLM configuration applied dynamically"}
 
 @app.get("/analyze/stream")
 async def analyze_stream(job_id: str):
@@ -269,7 +295,7 @@ async def query(req: QueryRequest, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=400, detail=str(e))
 
 @app.post("/requirements/stream")
-async def requirements_stream(version: Optional[str] = None, db: AsyncSession = Depends(get_db)):
+async def requirements_stream(version: Optional[str] = None, session_id: Optional[str] = "default", db: AsyncSession = Depends(get_db)):
     storage = VersionedStorage(db)
     version = version or await storage.get_current_version()
     if not version:
@@ -289,7 +315,7 @@ async def requirements_stream(version: Optional[str] = None, db: AsyncSession = 
         WHERE c.version = :v AND f.valid_to IS NULL
     """, {"v": version})
     
-    udf = LLMUDF()
+    udf = LLMUDF(session_id=session_id)
 
     async def event_generator():
         full_response = ""
@@ -350,13 +376,13 @@ async def requirements_stream(version: Optional[str] = None, db: AsyncSession = 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 @app.post("/requirements", status_code=202)
-async def requirements(version: Optional[str] = None, db: AsyncSession = Depends(get_db)):
+async def requirements(version: Optional[str] = None, session_id: Optional[str] = "default", db: AsyncSession = Depends(get_db)):
     storage = VersionedStorage(db)
     version = version or await storage.get_current_version()
     if not version:
         raise HTTPException(status_code=400, detail="No version found")
     
-    job = llm_queue.enqueue(generate_requirements_task, version)
+    job = llm_queue.enqueue(generate_requirements_task, version, session_id)
     return {"job_id": job.id, "status": "pending"}
 
 @app.get("/requirements/status/{job_id}")

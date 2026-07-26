@@ -85,3 +85,49 @@ def test_analyze_stream_job_not_found():
         lines = [line for line in response.iter_lines() if line]
         assert len(lines) == 1
         assert "Job not found" in lines[0]
+
+def test_post_config_llm_and_udf_sync():
+    client = TestClient(app)
+
+    # We will mock Redis to capture setex/get calls
+    stored_configs = {}
+
+    def mock_setex(key, ttl, value):
+        stored_configs[key] = value
+
+    def mock_get(key):
+        return stored_configs.get(key)
+
+    mock_redis = MagicMock()
+    mock_redis.setex.side_effect = mock_setex
+    mock_redis.get.side_effect = mock_get
+
+    with patch("redis.Redis", return_value=mock_redis):
+        # 1. POST the dynamic configuration
+        payload = {
+            "provider": "openai",
+            "model": "gpt-4",
+            "api_key": "sk-proj-test-123456",
+            "session_id": "session-xyz"
+        }
+        response = client.post("/config/llm", json=payload)
+        assert response.status_code == 200
+        assert response.json()["status"] == "success"
+
+        # Verify it was stored under correct key and with TTL
+        mock_redis.setex.assert_called_once()
+
+        # 2. Initialize LLMUDF and verify it loads correct config
+        from code_intel.core.udf import LLMUDF
+        udf = LLMUDF(session_id="session-xyz")
+        assert udf.provider == "openai"
+        assert udf.model == "gpt-4"
+        assert udf.api_key == "sk-proj-test-123456"
+
+        # 3. Initialize LLMUDF with different session_id, should fallback to defaults
+        udf_fallback = LLMUDF(session_id="other-session")
+        # should match defaults from settings
+        from code_intel.settings import LLM_PROVIDER, LLM_MODEL, LLM_API_KEY
+        assert udf_fallback.provider == LLM_PROVIDER.lower()
+        assert udf_fallback.model == LLM_MODEL
+        assert udf_fallback.api_key == LLM_API_KEY
