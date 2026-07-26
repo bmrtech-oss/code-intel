@@ -213,3 +213,84 @@ def test_get_repo_tree():
 
     finally:
         app.dependency_overrides.clear()
+
+def test_get_graph_file_level():
+    client = TestClient(app)
+
+    mock_db = MagicMock()
+    mock_execute = AsyncMock()
+    mock_db.execute = mock_execute
+
+    mock_nodes_result = MagicMock()
+    mock_nodes_result.mappings.return_value = [
+        {"fqn": "pkg.f1", "kind": "function", "file": "src/main.py"},
+        {"fqn": "pkg.f2", "kind": "function", "file": "src/auth.py"}
+    ]
+    mock_edges_result = MagicMock()
+    mock_edges_result.mappings.return_value = [
+        {"from_fqn": "pkg.f1", "to_fqn": "pkg.f2"}
+    ]
+
+    mock_execute.side_effect = [mock_nodes_result, mock_edges_result]
+
+    async def override_get_db():
+        yield mock_db
+
+    app.dependency_overrides[get_db] = override_get_db
+
+    try:
+        response = client.get("/graph?version=sha-123&level=file")
+        assert response.status_code == 200
+        data = response.json()
+
+        # Should aggregate to files
+        assert "nodes" in data
+        assert "edges" in data
+        assert len(data["nodes"]) == 2
+        assert {n["id"] for n in data["nodes"]} == {"file:src/main.py", "file:src/auth.py"}
+        assert len(data["edges"]) == 1
+        assert data["edges"][0] == {"source": "file:src/main.py", "target": "file:src/auth.py", "type": "imports"}
+
+    finally:
+        app.dependency_overrides.clear()
+
+def test_get_graph_all_level_with_focus():
+    client = TestClient(app)
+
+    mock_db = MagicMock()
+    mock_execute = AsyncMock()
+    mock_db.execute = mock_execute
+
+    mock_nodes_result = MagicMock()
+    mock_nodes_result.mappings.return_value = [
+        {"fqn": "pkg.f1", "kind": "function", "file": "src/main.py"},
+        {"fqn": "pkg.f2", "kind": "function", "file": "src/auth.py"},
+        {"fqn": "pkg.f3", "kind": "function", "file": "src/db.py"}
+    ]
+    mock_edges_result = MagicMock()
+    mock_edges_result.mappings.return_value = [
+        {"from_fqn": "pkg.f1", "to_fqn": "pkg.f2"},
+        {"from_fqn": "pkg.f2", "to_fqn": "pkg.f3"} # this shouldn't be included if focus is pkg.f1 and depth is 1
+    ]
+
+    mock_execute.side_effect = [mock_nodes_result, mock_edges_result]
+
+    async def override_get_db():
+        yield mock_db
+
+    app.dependency_overrides[get_db] = override_get_db
+
+    try:
+        response = client.get("/graph?version=sha-123&level=all&focus_symbol=pkg.f1")
+        assert response.status_code == 200
+        data = response.json()
+
+        # Only nodes and edges within radial depth 1 of pkg.f1
+        assert "nodes" in data
+        assert "edges" in data
+        assert {n["id"] for n in data["nodes"]} == {"pkg.f1", "pkg.f2"}
+        assert len(data["edges"]) == 1
+        assert data["edges"][0] == {"source": "pkg.f1", "target": "pkg.f2", "type": "calls"}
+
+    finally:
+        app.dependency_overrides.clear()

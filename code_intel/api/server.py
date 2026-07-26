@@ -219,6 +219,7 @@ async def analyze_stream(job_id: str):
 @app.get("/repo/branches-and-commits")
 async def get_branches_and_commits(repo_path: str, workspace_id: Optional[str] = None):
     import git
+    from datetime import datetime
     from ..core.git_handler import GitRepoHandler
     from ..core.workspace import WorkspaceManager
     from ..storage.graph_engine import SimpleGraphEngine
@@ -388,6 +389,131 @@ async def get_repo_tree(version: str, db: AsyncSession = Depends(get_db)):
                 current = current[part]["children"]
 
     return tree
+
+@app.get("/graph")
+async def get_graph(version: str, level: str = "file", focus_symbol: Optional[str] = None, db: AsyncSession = Depends(get_db)):
+    # Try querying graph_nodes/graph_edges
+    db_nodes = []
+    try:
+        result = await db.execute(
+            text("SELECT fqn, kind, file FROM graph_nodes WHERE version = :v"),
+            {"v": version}
+        )
+        db_nodes = [dict(row) for row in result.mappings()]
+    except Exception:
+        pass
+
+    if not db_nodes:
+        # Fallback to current_symbols
+        try:
+            result = await db.execute(
+                text("SELECT name AS fqn, kind, file FROM current_symbols WHERE version = :v"),
+                {"v": version}
+            )
+            db_nodes = [dict(row) for row in result.mappings()]
+        except Exception:
+            pass
+
+    db_edges = []
+    try:
+        result = await db.execute(
+            text("SELECT from_fqn, to_fqn FROM graph_edges WHERE version = :v"),
+            {"v": version}
+        )
+        db_edges = [dict(row) for row in result.mappings()]
+    except Exception:
+        pass
+
+    if not db_edges:
+        # Fallback to current_calls
+        try:
+            result = await db.execute(
+                text("SELECT caller AS from_fqn, callee AS to_fqn FROM current_calls WHERE version = :v"),
+                {"v": version}
+            )
+            db_edges = [dict(row) for row in result.mappings()]
+        except Exception:
+            pass
+
+    nodes = []
+    edges = []
+
+    if level == "file":
+        # Only FileNode nodes and file-to-file dependencies
+        unique_files = sorted(list(set(n["file"] for n in db_nodes if n.get("file"))))
+        for filepath in unique_files:
+            nodes.append({
+                "id": f"file:{filepath}",
+                "label": os.path.basename(filepath),
+                "type": "file"
+            })
+
+        symbol_to_file = {n["fqn"]: n["file"] for n in db_nodes if n.get("file")}
+
+        seen_edges = set()
+        for e in db_edges:
+            src_symbol = e.get("from_fqn")
+            tgt_symbol = e.get("to_fqn")
+            if src_symbol in symbol_to_file and tgt_symbol in symbol_to_file:
+                src_file = symbol_to_file[src_symbol]
+                tgt_file = symbol_to_file[tgt_symbol]
+                if src_file != tgt_file:
+                    edge_tuple = (src_file, tgt_file)
+                    if edge_tuple not in seen_edges:
+                        seen_edges.add(edge_tuple)
+                        edges.append({
+                            "source": f"file:{src_file}",
+                            "target": f"file:{tgt_file}",
+                            "type": "imports"
+                        })
+    else: # level == "all"
+        # Full function-level network or radial depth 1 around focus_symbol
+        symbol_to_kind = {n["fqn"]: n.get("kind", "symbol") for n in db_nodes}
+
+        if focus_symbol:
+            # Radial depth of 1 from focus_symbol
+            keep_nodes = {focus_symbol}
+            for e in db_edges:
+                src = e.get("from_fqn")
+                tgt = e.get("to_fqn")
+                if src == focus_symbol or tgt == focus_symbol:
+                    if src:
+                        keep_nodes.add(src)
+                    if tgt:
+                        keep_nodes.add(tgt)
+                    edges.append({
+                        "source": src,
+                        "target": tgt,
+                        "type": "calls"
+                    })
+
+            for fqn in sorted(list(keep_nodes)):
+                kind = symbol_to_kind.get(fqn, "symbol")
+                nodes.append({
+                    "id": fqn,
+                    "label": fqn.split(".")[-1] if "." in fqn else fqn,
+                    "type": kind
+                })
+        else:
+            # Return all function-level nodes and call-level edges
+            for n in db_nodes:
+                fqn = n["fqn"]
+                nodes.append({
+                    "id": fqn,
+                    "label": fqn.split(".")[-1] if "." in fqn else fqn,
+                    "type": n.get("kind", "symbol")
+                })
+            for e in db_edges:
+                edges.append({
+                    "source": e.get("from_fqn"),
+                    "target": e.get("to_fqn"),
+                    "type": "calls"
+                })
+
+    return {
+        "nodes": nodes,
+        "edges": edges
+    }
 
 @app.post("/query")
 async def query(req: QueryRequest, db: AsyncSession = Depends(get_db)):
