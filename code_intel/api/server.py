@@ -1,3 +1,4 @@
+import os
 import re
 import json
 from ..utils.traceability import fuzzy_match_symbols
@@ -20,9 +21,14 @@ from ..settings import ALLOWED_ORIGINS
 
 app = FastAPI(title="Code Intelligence Platform (Prod)", version="1.0.0")
 
+origins = list(ALLOWED_ORIGINS)
+for tauri_origin in ["tauri://localhost", "http://tauri.localhost"]:
+    if tauri_origin not in origins:
+        origins.append(tauri_origin)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
+    allow_origins=origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -132,6 +138,18 @@ async def analyze(req: AnalyzeRequest, background_tasks: BackgroundTasks, db: As
     else:
         job = queue.enqueue(run_ingestion, actual_path, version)
         return {"status": "indexing started", "version": version, "job_id": job.id}
+
+@app.get("/status")
+@app.get("/api/status")
+async def get_status():
+    is_docker = os.path.exists("/.dockerenv") or os.getenv("IS_DOCKER", "false").lower() == "true"
+    return {
+        "status": "active",
+        "version": "1.0.0",
+        "is_docker": is_docker,
+        "allowed_volumes": ["/repo", "/shared"],
+        "extractor_version": EXTRACTOR_VERSION
+    }
 
 @app.get("/status/{job_id}")
 async def status(job_id: str):
