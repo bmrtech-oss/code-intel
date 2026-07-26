@@ -284,7 +284,14 @@ async def get_branches_and_commits(repo_path: str, workspace_id: Optional[str] =
     try:
         # Defense-in-depth: canonicalize and constrain path before filesystem access
         safe_root = os.path.realpath(os.getcwd())
-        resolved_path = os.path.realpath(actual_path)
+
+        if is_git_url(repo_path):
+            resolved_path = os.path.realpath(actual_path)
+        else:
+            if os.path.isabs(actual_path):
+                raise HTTPException(status_code=400, detail="Invalid or unauthorized repository path")
+            resolved_path = os.path.realpath(os.path.join(safe_root, actual_path))
+
         if os.path.commonpath([safe_root, resolved_path]) != safe_root:
             raise HTTPException(status_code=400, detail="Invalid or unauthorized repository path")
 
