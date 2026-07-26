@@ -332,6 +332,63 @@ async def get_branches_and_commits(repo_path: str, workspace_id: Optional[str] =
         "commits": commits
     }
 
+@app.get("/repo/tree")
+async def get_repo_tree(version: str, db: AsyncSession = Depends(get_db)):
+    # Try querying the graph_nodes read model first
+    nodes = []
+    try:
+        result = await db.execute(
+            text("SELECT fqn, file FROM graph_nodes WHERE version = :v"),
+            {"v": version}
+        )
+        nodes = [dict(row) for row in result.mappings()]
+    except Exception:
+        pass
+
+    # Fallback to current_symbols view if graph_nodes is empty or fails
+    if not nodes:
+        try:
+            result = await db.execute(
+                text("SELECT name AS fqn, file FROM current_symbols WHERE version = :v"),
+                {"v": version}
+            )
+            nodes = [dict(row) for row in result.mappings()]
+        except Exception:
+            pass
+
+    # Aggregate active files and their symbols
+    files_symbols = {}
+    for n in nodes:
+        filepath = n.get("file")
+        fqn = n.get("fqn")
+        if filepath and fqn:
+            if filepath not in files_symbols:
+                files_symbols[filepath] = []
+            files_symbols[filepath].append(fqn)
+
+    # Build the hierarchical tree
+    tree = {}
+    for filepath, symbols in files_symbols.items():
+        parts = filepath.strip("/").split("/")
+        current = tree
+        for i, part in enumerate(parts):
+            is_last = (i == len(parts) - 1)
+            if is_last:
+                current[part] = {
+                    "type": "file",
+                    "path": filepath,
+                    "symbols": sorted(list(set(symbols)))
+                }
+            else:
+                if part not in current:
+                    current[part] = {
+                        "type": "folder",
+                        "children": {}
+                    }
+                current = current[part]["children"]
+
+    return tree
+
 @app.post("/query")
 async def query(req: QueryRequest, db: AsyncSession = Depends(get_db)):
     from ..settings import USE_BITEMPORAL

@@ -1,7 +1,8 @@
 import os
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, AsyncMock
 from fastapi.testclient import TestClient
 from code_intel.api.server import app
+from code_intel.core.storage import get_db
 
 def test_api_status_default():
     client = TestClient(app)
@@ -165,3 +166,50 @@ def test_get_branches_and_commits_simple_graph_fallback():
         data = response.json()
         assert data["branches"] == ["main"]
         assert data["commits"] == [{"sha": "c1", "author": "Alice", "date": "2026-07-16T12:00:00Z"}]
+
+def test_get_repo_tree():
+    client = TestClient(app)
+
+    mock_db = MagicMock()
+    mock_execute = AsyncMock()
+    mock_db.execute = mock_execute
+
+    mock_result = MagicMock()
+    mock_result.mappings.return_value = [
+        {"fqn": "FQN1", "file": "src/main.py"},
+        {"fqn": "FQN2", "file": "src/main.py"},
+        {"fqn": "FQN3", "file": "src/api/auth.py"},
+        {"fqn": "FQN4", "file": "tests/test_api.py"}
+    ]
+
+    async def override_get_db():
+        yield mock_db
+
+    app.dependency_overrides[get_db] = override_get_db
+
+    try:
+        mock_execute.return_value = mock_result
+
+        response = client.get("/repo/tree?version=sha-123")
+        assert response.status_code == 200
+        data = response.json()
+
+        assert "src" in data
+        assert data["src"]["type"] == "folder"
+        assert "main.py" in data["src"]["children"]
+        assert data["src"]["children"]["main.py"]["type"] == "file"
+        assert data["src"]["children"]["main.py"]["path"] == "src/main.py"
+        assert data["src"]["children"]["main.py"]["symbols"] == ["FQN1", "FQN2"]
+
+        assert "api" in data["src"]["children"]
+        assert data["src"]["children"]["api"]["type"] == "folder"
+        assert "auth.py" in data["src"]["children"]["api"]["children"]
+        assert data["src"]["children"]["api"]["children"]["auth.py"]["symbols"] == ["FQN3"]
+
+        assert "tests" in data
+        assert data["tests"]["type"] == "folder"
+        assert "test_api.py" in data["tests"]["children"]
+        assert data["tests"]["children"]["test_api.py"]["symbols"] == ["FQN4"]
+
+    finally:
+        app.dependency_overrides.clear()
