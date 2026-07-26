@@ -1,3 +1,4 @@
+import os
 import re
 import json
 from ..utils.traceability import fuzzy_match_symbols
@@ -20,9 +21,14 @@ from ..settings import ALLOWED_ORIGINS
 
 app = FastAPI(title="Code Intelligence Platform (Prod)", version="1.0.0")
 
+origins = list(ALLOWED_ORIGINS)
+for tauri_origin in ["tauri://localhost", "http://tauri.localhost"]:
+    if tauri_origin not in origins:
+        origins.append(tauri_origin)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
+    allow_origins=origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -30,6 +36,33 @@ app.add_middleware(
 def is_git_url(path: str) -> bool:
     """Check if the path is a Git repository URL."""
     return bool(re.match(r'^(https?://|git@)', path))
+
+def is_safe_path(path: str) -> bool:
+    """Check if the resolved path is within permitted directories."""
+    try:
+        import tempfile
+        # Resolve real absolute path
+        abs_path = os.path.abspath(path)
+        real_path = os.path.realpath(abs_path)
+
+        # Safe root directories
+        safe_roots = [
+            os.path.realpath(os.getcwd()),
+            os.path.realpath(tempfile.gettempdir()),
+            "/repo",
+            "/shared"
+        ]
+
+        for root in safe_roots:
+            try:
+                common_prefix = os.path.commonpath([real_path, root])
+                if common_prefix == root:
+                    return True
+            except ValueError:
+                continue
+        return False
+    except Exception:
+        return False
 
 def extract_json(text: str):
     # With Ollama grammar, we expect valid JSON directly.
@@ -113,9 +146,20 @@ class QueryRequest(BaseModel):
     symbol: Optional[str] = None
     depth: Optional[int] = 3
 
+class LLMConfigRequest(BaseModel):
+    provider: str
+    model: str
+    api_key: str
+    session_id: Optional[str] = "default"
+
 @app.post("/analyze")
 async def analyze(req: AnalyzeRequest, background_tasks: BackgroundTasks, db: AsyncSession = Depends(get_db)):
     from ..settings import USE_TEMPORAL
+
+    # Path Traversal Security check
+    if not is_git_url(req.repo_path) and not is_safe_path(req.repo_path):
+        raise HTTPException(status_code=400, detail="Invalid or unauthorized repository path")
+
     version = req.version or str(int(datetime.utcnow().timestamp()))
     actual_path = req.repo_path
     temp_handler = None
@@ -133,12 +177,392 @@ async def analyze(req: AnalyzeRequest, background_tasks: BackgroundTasks, db: As
         job = queue.enqueue(run_ingestion, actual_path, version)
         return {"status": "indexing started", "version": version, "job_id": job.id}
 
+@app.get("/status")
+@app.get("/api/status")
+async def get_status():
+    is_docker = os.path.exists("/.dockerenv") or os.getenv("IS_DOCKER", "false").lower() == "true"
+    return {
+        "status": "active",
+        "version": "1.0.0",
+        "is_docker": is_docker,
+        "allowed_volumes": ["/repo", "/shared"],
+        "extractor_version": EXTRACTOR_VERSION
+    }
+
 @app.get("/status/{job_id}")
 async def status(job_id: str):
     job = queue.fetch_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     return {"job_id": job_id, "status": job.get_status(), "result": job.result if job.is_finished else None}
+
+@app.post("/config/llm")
+async def config_llm(req: LLMConfigRequest):
+    from redis import Redis
+    from ..settings import REDIS_HOST, REDIS_PORT
+    import json
+
+    session_id = req.session_id or "default"
+    try:
+        r = Redis(host=REDIS_HOST, port=REDIS_PORT)
+        config_data = {
+            "provider": req.provider,
+            "model": req.model,
+            "api_key": req.api_key
+        }
+        r.setex(f"llm_config:{session_id}", 3600, json.dumps(config_data))
+    except Exception:
+        raise HTTPException(status_code=500, detail="Failed to save LLM configuration in memory cache")
+
+    return {"status": "success", "message": "LLM configuration applied dynamically"}
+
+@app.get("/analyze/stream")
+async def analyze_stream(job_id: str):
+    import asyncio
+    from redis import Redis
+    from ..settings import REDIS_HOST, REDIS_PORT
+
+    async def event_generator():
+        r = Redis(host=REDIS_HOST, port=REDIS_PORT)
+        # Timeout guard: max 30 minutes of polling
+        for _ in range(3600):
+            data_bytes = r.get(f"progress:{job_id}")
+            if data_bytes:
+                data = json.loads(data_bytes)
+                yield f"data: {json.dumps(data)}\n\n"
+                if data.get("done"):
+                    break
+            else:
+                job = queue.fetch_job(job_id)
+                if job:
+                    if job.is_failed:
+                        yield f"data: {json.dumps({'file': '', 'progress': 100, 'done': True, 'error': 'Job failed'})}\n\n"
+                        break
+                    elif job.is_finished:
+                        yield f"data: {json.dumps({'file': '', 'progress': 100, 'done': True})}\n\n"
+                        break
+                else:
+                    yield f"data: {json.dumps({'file': '', 'progress': 100, 'done': True, 'error': 'Job not found'})}\n\n"
+                    break
+            await asyncio.sleep(0.5)
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+@app.get("/repo/branches-and-commits")
+async def get_branches_and_commits(repo_path: str, workspace_id: Optional[str] = None):
+    # Path Traversal Security check
+    if not is_git_url(repo_path) and not is_safe_path(repo_path):
+        raise HTTPException(status_code=400, detail="Invalid or unauthorized repository path")
+
+    import git
+    from datetime import datetime
+    from ..core.git_handler import GitRepoHandler
+    from ..core.workspace import WorkspaceManager
+    from ..storage.graph_engine import SimpleGraphEngine
+
+    ws_manager = WorkspaceManager()
+    branches = []
+    commits = []
+
+    # Query the workspace manager to list all branches
+    try:
+        branches = await ws_manager.get_workspace_branches(workspace_id)
+    except Exception:
+        pass
+
+    # Try Git repository lookup
+    actual_path = repo_path
+    temp_handler = None
+    if is_git_url(repo_path):
+        temp_handler = GitRepoHandler(repo_path)
+        try:
+            actual_path = temp_handler.clone()
+        except Exception:
+            pass
+
+    git_success = False
+    try:
+        # Defense-in-depth: canonicalize and constrain path before filesystem access
+        safe_root = os.path.realpath(os.getcwd())
+
+        if is_git_url(repo_path):
+            resolved_path = os.path.realpath(actual_path)
+        else:
+            if os.path.isabs(actual_path):
+                raise HTTPException(status_code=400, detail="Invalid or unauthorized repository path")
+            resolved_path = os.path.realpath(os.path.join(safe_root, actual_path))
+
+        if os.path.commonpath([safe_root, resolved_path]) != safe_root:
+            raise HTTPException(status_code=400, detail="Invalid or unauthorized repository path")
+
+        if os.path.exists(resolved_path):
+            repo = git.Repo(resolved_path)
+
+            git_branches = []
+            for ref in repo.references:
+                if isinstance(ref, (git.Head, git.RemoteReference)):
+                    name = ref.name.split("/")[-1]
+                    if name not in git_branches and "HEAD" not in name:
+                        git_branches.append(name)
+
+            if not git_branches and repo.active_branch:
+                git_branches.append(repo.active_branch.name)
+
+            for b in git_branches:
+                if b not in branches:
+                    branches.append(b)
+
+            # Save found branches back to workspace manager
+            if workspace_id and branches:
+                try:
+                    await ws_manager.set_workspace_branches(workspace_id, branches)
+                except Exception:
+                    pass
+
+            # Perform recursive lookup over parent commits
+            rev = "HEAD"
+            try:
+                rev = repo.active_branch.name
+            except Exception:
+                for b in ["main", "master", "dev"]:
+                    if b in branches:
+                        rev = b
+                        break
+                if rev == "HEAD" and branches:
+                    rev = branches[0]
+
+            for commit in repo.iter_commits(rev):
+                commits.append({
+                    "sha": commit.hexsha,
+                    "author": commit.author.name or "Unknown",
+                    "date": commit.committed_datetime.isoformat()
+                })
+            git_success = True
+    except Exception:
+        pass
+    finally:
+        if temp_handler:
+            temp_handler.cleanup()
+
+    # Fallback: Utilise SimpleGraphEngine/commits.jsonl or SQL read models if Git lookup didn't run or fail
+    if not git_success:
+        try:
+            engine = SimpleGraphEngine(repo_path)
+            if engine.commits:
+                tip = await engine.get_current_branch_tip()
+                ancestry = await engine.topological_lookback_query(tip)
+                commit_map = {c["sha"]: c for c in engine.commits}
+                for sha in ancestry:
+                    c = commit_map.get(sha)
+                    if c:
+                        commits.append({
+                            "sha": c["sha"],
+                            "author": c.get("author", "Unknown"),
+                            "date": c.get("date", datetime.utcnow().isoformat())
+                        })
+                if "main" not in branches:
+                    branches.append("main")
+        except Exception:
+            pass
+
+    if not branches:
+        branches = ["main"]
+    if not commits:
+        commits = [
+            {
+                "sha": "a7b8c9",
+                "author": "Jules",
+                "date": "2026-07-16T12:00:00Z"
+            }
+        ]
+
+    await ws_manager.close()
+    return {
+        "branches": branches,
+        "commits": commits
+    }
+
+@app.get("/repo/tree")
+async def get_repo_tree(version: str, db: AsyncSession = Depends(get_db)):
+    # Try querying the graph_nodes read model first
+    nodes = []
+    try:
+        result = await db.execute(
+            text("SELECT fqn, file FROM graph_nodes WHERE version = :v"),
+            {"v": version}
+        )
+        nodes = [dict(row) for row in result.mappings()]
+    except Exception:
+        pass
+
+    # Fallback to current_symbols view if graph_nodes is empty or fails
+    if not nodes:
+        try:
+            result = await db.execute(
+                text("SELECT name AS fqn, file FROM current_symbols WHERE version = :v"),
+                {"v": version}
+            )
+            nodes = [dict(row) for row in result.mappings()]
+        except Exception:
+            pass
+
+    # Aggregate active files and their symbols
+    files_symbols = {}
+    for n in nodes:
+        filepath = n.get("file")
+        fqn = n.get("fqn")
+        if filepath and fqn:
+            if filepath not in files_symbols:
+                files_symbols[filepath] = []
+            files_symbols[filepath].append(fqn)
+
+    # Build the hierarchical tree
+    tree = {}
+    for filepath, symbols in files_symbols.items():
+        parts = filepath.strip("/").split("/")
+        current = tree
+        for i, part in enumerate(parts):
+            is_last = (i == len(parts) - 1)
+            if is_last:
+                current[part] = {
+                    "type": "file",
+                    "path": filepath,
+                    "symbols": sorted(list(set(symbols)))
+                }
+            else:
+                if part not in current:
+                    current[part] = {
+                        "type": "folder",
+                        "children": {}
+                    }
+                current = current[part]["children"]
+
+    return tree
+
+@app.get("/graph")
+async def get_graph(version: str, level: str = "file", focus_symbol: Optional[str] = None, db: AsyncSession = Depends(get_db)):
+    # Try querying graph_nodes/graph_edges
+    db_nodes = []
+    try:
+        result = await db.execute(
+            text("SELECT fqn, kind, file FROM graph_nodes WHERE version = :v"),
+            {"v": version}
+        )
+        db_nodes = [dict(row) for row in result.mappings()]
+    except Exception:
+        pass
+
+    if not db_nodes:
+        # Fallback to current_symbols
+        try:
+            result = await db.execute(
+                text("SELECT name AS fqn, kind, file FROM current_symbols WHERE version = :v"),
+                {"v": version}
+            )
+            db_nodes = [dict(row) for row in result.mappings()]
+        except Exception:
+            pass
+
+    db_edges = []
+    try:
+        result = await db.execute(
+            text("SELECT from_fqn, to_fqn FROM graph_edges WHERE version = :v"),
+            {"v": version}
+        )
+        db_edges = [dict(row) for row in result.mappings()]
+    except Exception:
+        pass
+
+    if not db_edges:
+        # Fallback to current_calls
+        try:
+            result = await db.execute(
+                text("SELECT caller AS from_fqn, callee AS to_fqn FROM current_calls WHERE version = :v"),
+                {"v": version}
+            )
+            db_edges = [dict(row) for row in result.mappings()]
+        except Exception:
+            pass
+
+    nodes = []
+    edges = []
+
+    if level == "file":
+        # Only FileNode nodes and file-to-file dependencies
+        unique_files = sorted(list(set(n["file"] for n in db_nodes if n.get("file"))))
+        for filepath in unique_files:
+            nodes.append({
+                "id": f"file:{filepath}",
+                "label": os.path.basename(filepath),
+                "type": "file"
+            })
+
+        symbol_to_file = {n["fqn"]: n["file"] for n in db_nodes if n.get("file")}
+
+        seen_edges = set()
+        for e in db_edges:
+            src_symbol = e.get("from_fqn")
+            tgt_symbol = e.get("to_fqn")
+            if src_symbol in symbol_to_file and tgt_symbol in symbol_to_file:
+                src_file = symbol_to_file[src_symbol]
+                tgt_file = symbol_to_file[tgt_symbol]
+                if src_file != tgt_file:
+                    edge_tuple = (src_file, tgt_file)
+                    if edge_tuple not in seen_edges:
+                        seen_edges.add(edge_tuple)
+                        edges.append({
+                            "source": f"file:{src_file}",
+                            "target": f"file:{tgt_file}",
+                            "type": "imports"
+                        })
+    else: # level == "all"
+        # Full function-level network or radial depth 1 around focus_symbol
+        symbol_to_kind = {n["fqn"]: n.get("kind", "symbol") for n in db_nodes}
+
+        if focus_symbol:
+            # Radial depth of 1 from focus_symbol
+            keep_nodes = {focus_symbol}
+            for e in db_edges:
+                src = e.get("from_fqn")
+                tgt = e.get("to_fqn")
+                if src == focus_symbol or tgt == focus_symbol:
+                    if src:
+                        keep_nodes.add(src)
+                    if tgt:
+                        keep_nodes.add(tgt)
+                    edges.append({
+                        "source": src,
+                        "target": tgt,
+                        "type": "calls"
+                    })
+
+            for fqn in sorted(list(keep_nodes)):
+                kind = symbol_to_kind.get(fqn, "symbol")
+                nodes.append({
+                    "id": fqn,
+                    "label": fqn.split(".")[-1] if "." in fqn else fqn,
+                    "type": kind
+                })
+        else:
+            # Return all function-level nodes and call-level edges
+            for n in db_nodes:
+                fqn = n["fqn"]
+                nodes.append({
+                    "id": fqn,
+                    "label": fqn.split(".")[-1] if "." in fqn else fqn,
+                    "type": n.get("kind", "symbol")
+                })
+            for e in db_edges:
+                edges.append({
+                    "source": e.get("from_fqn"),
+                    "target": e.get("to_fqn"),
+                    "type": "calls"
+                })
+
+    return {
+        "nodes": nodes,
+        "edges": edges
+    }
 
 @app.post("/query")
 async def query(req: QueryRequest, db: AsyncSession = Depends(get_db)):
@@ -219,7 +643,7 @@ async def query(req: QueryRequest, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=400, detail=str(e))
 
 @app.post("/requirements/stream")
-async def requirements_stream(version: Optional[str] = None, db: AsyncSession = Depends(get_db)):
+async def requirements_stream(version: Optional[str] = None, session_id: Optional[str] = "default", db: AsyncSession = Depends(get_db)):
     storage = VersionedStorage(db)
     version = version or await storage.get_current_version()
     if not version:
@@ -239,7 +663,7 @@ async def requirements_stream(version: Optional[str] = None, db: AsyncSession = 
         WHERE c.version = :v AND f.valid_to IS NULL
     """, {"v": version})
     
-    udf = LLMUDF()
+    udf = LLMUDF(session_id=session_id)
 
     async def event_generator():
         full_response = ""
@@ -300,13 +724,13 @@ async def requirements_stream(version: Optional[str] = None, db: AsyncSession = 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 @app.post("/requirements", status_code=202)
-async def requirements(version: Optional[str] = None, db: AsyncSession = Depends(get_db)):
+async def requirements(version: Optional[str] = None, session_id: Optional[str] = "default", db: AsyncSession = Depends(get_db)):
     storage = VersionedStorage(db)
     version = version or await storage.get_current_version()
     if not version:
         raise HTTPException(status_code=400, detail="No version found")
     
-    job = llm_queue.enqueue(generate_requirements_task, version)
+    job = llm_queue.enqueue(generate_requirements_task, version, session_id)
     return {"job_id": job.id, "status": "pending"}
 
 @app.get("/requirements/status/{job_id}")

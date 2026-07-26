@@ -88,20 +88,43 @@ def get_handler(model_name: str) -> ModelHandler:
     return FileBasedHandler(DEFAULT_PROMPT)
 
 class LLMUDF:
-    def __init__(self):
-        self.provider = LLM_PROVIDER.lower()
-        self.model = LLM_MODEL
+    def __init__(self, session_id: str = "default"):
+        import json
+        from redis import Redis
+
+        redis_host = os.getenv("REDIS_HOST", "redis")
+        redis_port = int(os.getenv("REDIS_PORT", 6379))
+
+        config = None
+        try:
+            r = Redis(host=redis_host, port=redis_port)
+            config_bytes = r.get(f"llm_config:{session_id}")
+            if config_bytes:
+                config = json.loads(config_bytes)
+        except Exception:
+            pass
+
+        if config:
+            self.provider = config.get("provider", LLM_PROVIDER).lower()
+            self.model = config.get("model", LLM_MODEL)
+            self.api_key = config.get("api_key", LLM_API_KEY)
+        else:
+            self.provider = LLM_PROVIDER.lower()
+            self.model = LLM_MODEL
+            self.api_key = LLM_API_KEY
+
         self.handler = get_handler(self.model)
 
         if self.provider == "ollama":
             self.ollama_client = AsyncClient(host=OLLAMA_URL)
-        elif self.provider == "openrouter":
+        elif self.provider in ("openrouter", "openai"):
             self.base_url = LLM_BASE_URL or "https://openrouter.ai/api/v1"
-            self.api_key = LLM_API_KEY
+            if self.provider == "openai":
+                self.base_url = LLM_BASE_URL or "https://api.openai.com/v1"
         elif self.provider == "google":
             import google.generativeai as genai
-            self.api_key = GOOGLE_API_KEY or LLM_API_KEY
-            genai.configure(api_key=self.api_key)
+            self.google_api_key = self.api_key or GOOGLE_API_KEY
+            genai.configure(api_key=self.google_api_key)
             self.google_client = genai.GenerativeModel(self.model)
         else:
             logging.warning(f"Unknown LLM provider: {self.provider}. Defaulting to Ollama.")

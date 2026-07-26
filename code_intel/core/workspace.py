@@ -24,6 +24,27 @@ class WorkspaceManager:
         # Also set a global "active" workspace pointer if needed, or just use a fixed ID
         await self.redis.set("workspace:active_id", workspace_id)
 
+    async def set_workspace_branches(self, workspace_id: str, branches: List[str]):
+        """
+        Stores workspace branches list in Redis.
+        """
+        await self.redis.set(f"workspace:{workspace_id}:branches", json.dumps(branches))
+
+    async def get_workspace_branches(self, workspace_id: Optional[str] = None) -> List[str]:
+        """
+        Retrieves workspace branches list from Redis.
+        """
+        if workspace_id is None:
+            workspace_id = await self.redis.get("workspace:active_id")
+
+        if not workspace_id:
+            return []
+
+        data = await self.redis.get(f"workspace:{workspace_id}:branches")
+        if data:
+            return json.loads(data)
+        return []
+
     async def get_session(self, workspace_id: Optional[str] = None) -> Optional[Dict]:
         """
         Retrieves workspace session data from Redis.
