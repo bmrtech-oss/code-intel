@@ -282,8 +282,14 @@ async def get_branches_and_commits(repo_path: str, workspace_id: Optional[str] =
 
     git_success = False
     try:
-        if os.path.exists(actual_path):
-            repo = git.Repo(actual_path)
+        # Defense-in-depth: canonicalize and constrain path before filesystem access
+        safe_root = os.path.realpath(os.getcwd())
+        resolved_path = os.path.realpath(actual_path)
+        if os.path.commonpath([safe_root, resolved_path]) != safe_root:
+            raise HTTPException(status_code=400, detail="Invalid or unauthorized repository path")
+
+        if os.path.exists(resolved_path):
+            repo = git.Repo(resolved_path)
 
             git_branches = []
             for ref in repo.references:
