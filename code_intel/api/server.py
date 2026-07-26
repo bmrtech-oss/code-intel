@@ -158,6 +158,38 @@ async def status(job_id: str):
         raise HTTPException(status_code=404, detail="Job not found")
     return {"job_id": job_id, "status": job.get_status(), "result": job.result if job.is_finished else None}
 
+@app.get("/analyze/stream")
+async def analyze_stream(job_id: str):
+    import asyncio
+    from redis import Redis
+    from ..settings import REDIS_HOST, REDIS_PORT
+
+    async def event_generator():
+        r = Redis(host=REDIS_HOST, port=REDIS_PORT)
+        # Timeout guard: max 30 minutes of polling
+        for _ in range(3600):
+            data_bytes = r.get(f"progress:{job_id}")
+            if data_bytes:
+                data = json.loads(data_bytes)
+                yield f"data: {json.dumps(data)}\n\n"
+                if data.get("done"):
+                    break
+            else:
+                job = queue.fetch_job(job_id)
+                if job:
+                    if job.is_failed:
+                        yield f"data: {json.dumps({'file': '', 'progress': 100, 'done': True, 'error': 'Job failed'})}\n\n"
+                        break
+                    elif job.is_finished:
+                        yield f"data: {json.dumps({'file': '', 'progress': 100, 'done': True})}\n\n"
+                        break
+                else:
+                    yield f"data: {json.dumps({'file': '', 'progress': 100, 'done': True, 'error': 'Job not found'})}\n\n"
+                    break
+            await asyncio.sleep(0.5)
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
 @app.post("/query")
 async def query(req: QueryRequest, db: AsyncSession = Depends(get_db)):
     from ..settings import USE_BITEMPORAL

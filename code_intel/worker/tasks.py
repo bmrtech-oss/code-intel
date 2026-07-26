@@ -1,7 +1,7 @@
 import os
 import asyncio
 from redis import Redis
-from rq import Queue
+from rq import Queue, get_current_job
 from temporalio import workflow, activity
 from temporalio.client import Client
 from datetime import timedelta
@@ -12,12 +12,28 @@ redis_conn = Redis(host=os.getenv("REDIS_HOST", "redis"), port=6379)
 queue = Queue("ingestion", connection=redis_conn)
 llm_queue = Queue("llm", connection=redis_conn)
 
-async def _run_ingestion(repo_path: str, version: str):
-    async with AsyncSessionLocal() as session:
-        storage = VersionedStorage(session)
-        pipeline = IngestionPipeline(storage)
-        await pipeline.walk_and_parse(repo_path, version)
-        await session.commit()
+async def _run_ingestion(repo_path: str, version: str, job_id: str = None):
+    try:
+        async with AsyncSessionLocal() as session:
+            storage = VersionedStorage(session)
+            pipeline = IngestionPipeline(storage)
+            await pipeline.walk_and_parse(repo_path, version, job_id=job_id)
+            await session.commit()
+    finally:
+        if job_id:
+            try:
+                import json
+                from redis import Redis
+                r = Redis(host=os.getenv("REDIS_HOST", "redis"), port=6379)
+                existing = r.get(f"progress:{job_id}")
+                if existing:
+                    data = json.loads(existing)
+                    data["done"] = True
+                    r.set(f"progress:{job_id}", json.dumps(data))
+                else:
+                    r.set(f"progress:{job_id}", json.dumps({"file": "", "progress": 100, "done": True}))
+            except Exception as e:
+                print(f"Error marking job as done in finally: {e}")
 
 # def run_ingestion(repo_path: str, version: str):
 #     asyncio.run(_run_ingestion(repo_path, version))
@@ -25,13 +41,15 @@ async def _run_ingestion(repo_path: str, version: str):
 def run_ingestion(repo_path: str, version: str, is_git_url: bool = False, branch: str = None):
     actual_path = repo_path
     temp_handler = None
+    job = get_current_job()
+    job_id = job.id if job else None
     try:
         if is_git_url:
             from ..core.git_handler import GitRepoHandler
             temp_handler = GitRepoHandler(repo_path, branch)
             actual_path = temp_handler.clone()
         # ... run ingestion on actual_path ...
-        asyncio.run(_run_ingestion(actual_path, version))
+        asyncio.run(_run_ingestion(actual_path, version, job_id=job_id))
     finally:
         if temp_handler:
             temp_handler.cleanup()

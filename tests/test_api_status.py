@@ -1,5 +1,5 @@
 import os
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 from fastapi.testclient import TestClient
 from code_intel.api.server import app
 
@@ -51,3 +51,37 @@ def test_api_status_cors():
         headers={"Origin": "http://tauri.localhost", "Access-Control-Request-Method": "GET"}
     )
     assert response.headers.get("access-control-allow-origin") == "http://tauri.localhost"
+
+def test_analyze_stream_redis_data():
+    client = TestClient(app)
+
+    mock_redis = MagicMock()
+    mock_redis.get.side_effect = [
+        b'{"file": "main.py", "progress": 42, "done": false}',
+        b'{"file": "other.py", "progress": 100, "done": true}'
+    ]
+
+    with patch("redis.Redis", return_value=mock_redis):
+        response = client.get("/analyze/stream?job_id=test-job-id")
+        assert response.status_code == 200
+        assert response.headers.get("content-type", "").startswith("text/event-stream")
+
+        lines = [line for line in response.iter_lines() if line]
+        assert len(lines) == 2
+        assert '{"file": "main.py", "progress": 42, "done": false}' in lines[0]
+        assert '{"file": "other.py", "progress": 100, "done": true}' in lines[1]
+
+def test_analyze_stream_job_not_found():
+    client = TestClient(app)
+
+    mock_redis = MagicMock()
+    mock_redis.get.return_value = None
+
+    with patch("redis.Redis", return_value=mock_redis), patch("code_intel.worker.tasks.queue.fetch_job", return_value=None):
+        response = client.get("/analyze/stream?job_id=non-existent-job")
+        assert response.status_code == 200
+        assert response.headers.get("content-type", "").startswith("text/event-stream")
+
+        lines = [line for line in response.iter_lines() if line]
+        assert len(lines) == 1
+        assert "Job not found" in lines[0]
