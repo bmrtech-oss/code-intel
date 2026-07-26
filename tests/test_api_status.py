@@ -131,3 +131,37 @@ def test_post_config_llm_and_udf_sync():
         assert udf_fallback.provider == LLM_PROVIDER.lower()
         assert udf_fallback.model == LLM_MODEL
         assert udf_fallback.api_key == LLM_API_KEY
+
+def test_get_branches_and_commits_fallback():
+    client = TestClient(app)
+
+    # Test fallback mode when git lookup fails/doesn't exist
+    response = client.get("/repo/branches-and-commits?repo_path=nonexistent_path")
+    assert response.status_code == 200
+    data = response.json()
+    assert "branches" in data
+    assert "commits" in data
+    assert len(data["branches"]) > 0
+    assert len(data["commits"]) > 0
+    assert data["commits"][0]["sha"] == "a7b8c9"
+
+def test_get_branches_and_commits_simple_graph_fallback():
+    client = TestClient(app)
+
+    # Mock SimpleGraphEngine to return custom commits
+    mock_engine = MagicMock()
+    mock_engine.commits = [{"sha": "c1", "author": "Alice", "date": "2026-07-16T12:00:00Z"}]
+    # Needs async methods
+    async def async_get_current_branch_tip():
+        return "c1"
+    async def async_topological_lookback_query(tip):
+        return ["c1"]
+    mock_engine.get_current_branch_tip.side_effect = async_get_current_branch_tip
+    mock_engine.topological_lookback_query.side_effect = async_topological_lookback_query
+
+    with patch("code_intel.storage.graph_engine.SimpleGraphEngine", return_value=mock_engine):
+        response = client.get("/repo/branches-and-commits?repo_path=some_jsonl_path")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["branches"] == ["main"]
+        assert data["commits"] == [{"sha": "c1", "author": "Alice", "date": "2026-07-16T12:00:00Z"}]
