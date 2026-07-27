@@ -117,6 +117,12 @@ echo -e "${CYAN}🚀 Starting Code-Intel One-Click Installation...${NC}"
 
 # 0. Initialize .env
 [ ! -f "$ENV_FILE" ] && [ "$ENV_FILE" == ".env" ] && cp .env.example .env
+mkdir -p data
+touch data/codeintel.db data/code_intel_graph.db 2>/dev/null || true
+if [ -d "data" ]; then
+    sudo chown -R $(id -u):$(id -g) data 2>/dev/null || true
+    chmod -R 777 data 2>/dev/null || true
+fi
 
 # 1. Package Structure Fix
 log_info "Verifying package structure..."
