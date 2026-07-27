@@ -5,7 +5,6 @@ import importlib
 def verify():
     print("--- Package Structure Verification ---")
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    src_dir = os.path.join(base_dir, "code_intel")
 
     # Dirs that MUST have __init__.py
     required_pkgs = [
