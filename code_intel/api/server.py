@@ -616,8 +616,34 @@ async def query(req: QueryRequest, db: AsyncSession = Depends(get_db)):
                         return {"result": {"status": "warning", "message": "No relevant tests found.", "impact": impact}}
 
                     import subprocess
+                    import re
+
+                    def is_safe_test_file(test_f: str) -> bool:
+                        if not test_f or not isinstance(test_f, str):
+                            return False
+                        # Restrict to safe path characters
+                        if not re.match(r'^[a-zA-Z0-9_\-\./]+$', test_f):
+                            return False
+                        # Disallow path traversal
+                        if ".." in test_f:
+                            return False
+                        # Disallow absolute paths
+                        if test_f.startswith("/"):
+                            return False
+                        # Must end with .py
+                        if not test_f.endswith(".py"):
+                            return False
+                        # Must be a test file pattern (starts with test_ or ends with _test.py)
+                        base = os.path.basename(test_f)
+                        if not base.startswith("test_") and not base.endswith("_test.py"):
+                            return False
+                        return True
+
                     results = []
                     for test_file in test_files:
+                        if not is_safe_test_file(test_file):
+                            results.append({"file": test_file, "error": "Unsafe or unauthorized test file path skipped"})
+                            continue
                         try:
                             process = subprocess.run(["uv", "run", "pytest", test_file], capture_output=True, text=True, timeout=60)
                             results.append({"file": test_file, "passed": process.returncode == 0, "stdout": process.stdout[-500:], "stderr": process.stderr[-500:]})
