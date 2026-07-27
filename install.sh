@@ -137,13 +137,26 @@ CURRENT_PROVIDER=$(grep "^LLM_PROVIDER=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2
 CURRENT_GOOGLE_KEY=$(grep "^GOOGLE_API_KEY=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2 | tr -d '"' || echo "")
 CURRENT_OR_KEY=$(grep "^LLM_API_KEY=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2 | tr -d '"' || echo "")
 
+OVERRIDE_ENV=true
+if [ -f "$ENV_FILE" ] && [ -t 0 ] && [ -z "${CI:-}" ]; then
+    echo -e "${YELLOW}⚠️  Existing $ENV_FILE file found.${NC}"
+    read -p "Would you like to run the configuration wizard to override it? (y/n) [default: n]: " -n 1 -r OVERRIDE_CHOICE
+    echo ""
+    if [[ ! "$OVERRIDE_CHOICE" =~ ^[Yy]$ ]]; then
+        OVERRIDE_ENV=false
+        log_info "Keeping existing configuration from $ENV_FILE."
+    fi
+fi
+
 SHOULD_PROMPT=false
-if [ -z "$CURRENT_PROVIDER" ] || [ "$CURRENT_PROVIDER" == "ollama" ]; then
-    SHOULD_PROMPT=true
-elif [ "$CURRENT_PROVIDER" == "google" ] && [ -z "$CURRENT_GOOGLE_KEY" ]; then
-    SHOULD_PROMPT=true
-elif [ "$CURRENT_PROVIDER" == "openrouter" ] && [ -z "$CURRENT_OR_KEY" ]; then
-    SHOULD_PROMPT=true
+if [ "$OVERRIDE_ENV" = true ]; then
+    if [ -z "$CURRENT_PROVIDER" ] || [ "$CURRENT_PROVIDER" == "ollama" ]; then
+        SHOULD_PROMPT=true
+    elif [ "$CURRENT_PROVIDER" == "google" ] && [ -z "$CURRENT_GOOGLE_KEY" ]; then
+        SHOULD_PROMPT=true
+    elif [ "$CURRENT_PROVIDER" == "openrouter" ] && [ -z "$CURRENT_OR_KEY" ]; then
+        SHOULD_PROMPT=true
+    fi
 fi
 
 if [ "$SHOULD_PROMPT" = true ]; then
@@ -164,7 +177,12 @@ if [ "$SHOULD_PROMPT" = true ]; then
 
     case "$LLM_CHOICE" in
         2)
-            read -p "Enter OpenRouter API Key (sk-or-...): " INPUT_KEY
+            if [ -t 0 ]; then
+                read -s -p "Enter OpenRouter API Key (sk-or-...): " INPUT_KEY
+                echo ""
+            else
+                read -r INPUT_KEY
+            fi
             if [ -n "$INPUT_KEY" ]; then
                 DEFAULT_MODEL="google/gemini-flash-1.5"
                 read -p "Enter Model Name (default: $DEFAULT_MODEL): " INPUT_MODEL
@@ -181,7 +199,12 @@ if [ "$SHOULD_PROMPT" = true ]; then
             update_env_var "LLM_MODEL" "phi3:mini"
             ;;
         *) # Default: Google Gemini
-            read -p "Enter Google Gemini API Key: " INPUT_KEY
+            if [ -t 0 ]; then
+                read -s -p "Enter Google Gemini API Key: " INPUT_KEY
+                echo ""
+            else
+                read -r INPUT_KEY
+            fi
             if [ -n "$INPUT_KEY" ]; then
                 DEFAULT_MODEL="gemini-1.5-flash"
                 read -p "Enter Model Name (default: $DEFAULT_MODEL): " INPUT_MODEL
@@ -240,9 +263,9 @@ if [ -z "$GRAPH_CHOICE" ] && [ -n "$CURRENT_GRAPH_ENGINE" ]; then
     fi
 fi
 
-# Prompt if not determined and running interactively
+# Prompt if not determined, running interactively, and override is allowed
 if [ -z "$DB_CHOICE" ]; then
-    if [ -t 0 ] && [ -z "${CI:-}" ]; then
+    if [ -t 0 ] && [ -z "${CI:-}" ] && [ "$OVERRIDE_ENV" = true ]; then
         echo ""
         echo -e "${CYAN}💾 Database Backend Configuration${NC}"
         echo "----------------------------"
@@ -271,7 +294,7 @@ case "$DB_CHOICE" in
 esac
 
 if [ -z "$GRAPH_CHOICE" ]; then
-    if [ -t 0 ] && [ -z "${CI:-}" ]; then
+    if [ -t 0 ] && [ -z "${CI:-}" ] && [ "$OVERRIDE_ENV" = true ]; then
         echo ""
         echo -e "${CYAN}🔌 Graph Engine Configuration${NC}"
         echo "----------------------------"
