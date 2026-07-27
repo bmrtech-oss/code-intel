@@ -468,8 +468,29 @@ else
         COMPOSE_PROFILES="--profile ollama"
     fi
 
-    if ! $COMPOSE_CMD $COMPOSE_PROFILES --env-file "$ENV_FILE" up -d postgres redis; then
-        log_error "Failed to start Postgres/Redis. Check disk space or logs."; exit 1
+    if [ "$DB_CHOICE" = "1" ]; then
+        log_info "Attempting to start Postgres & Redis..."
+        if ! $COMPOSE_CMD $COMPOSE_PROFILES --env-file "$ENV_FILE" up -d postgres redis; then
+            log_warn "Failed to start Postgres. This can happen in unprivileged container environments (e.g., overlayfs operation not permitted)."
+            log_info "Falling back to SQLite database backend..."
+            DB_CHOICE="2"
+            update_env_var "DATABASE_URL" "sqlite+aiosqlite:///data/codeintel.db"
+            update_env_var "DATABASE_URL_CONTAINER" "sqlite+aiosqlite:///data/codeintel.db"
+            # Also update Graph Engine to local if it was not explicitly configured
+            if [ -z "$GRAPH_CHOICE" ] || [ "$GRAPH_CHOICE" = "1" ]; then
+                log_info "Switching graph engine to local fallback..."
+                GRAPH_CHOICE="2"
+                update_env_var "GRAPH_ENGINE" "local"
+                update_env_var "GRAPHQLITE_DB_PATH" "data/code_intel_graph.db"
+            fi
+        fi
+    fi
+
+    if [ "$DB_CHOICE" = "2" ]; then
+        log_info "Starting Redis (for SQLite backend)..."
+        if ! $COMPOSE_CMD $COMPOSE_PROFILES --env-file "$ENV_FILE" up -d redis; then
+            log_error "Failed to start Redis. Check disk space or logs."; exit 1
+        fi
     fi
 
     if [ "$DB_CHOICE" = "1" ]; then
