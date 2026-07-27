@@ -155,14 +155,20 @@ if [ -f "$ENV_FILE" ] && [ -t 0 ] && [ -z "${CI:-}" ]; then
 fi
 
 SHOULD_PROMPT=false
-if [ "$OVERRIDE_ENV" = true ]; then
-    if [ -z "$CURRENT_PROVIDER" ] || [ "$CURRENT_PROVIDER" == "ollama" ]; then
+if [ -f "$ENV_FILE" ]; then
+    if [ "$OVERRIDE_ENV" = true ]; then
         SHOULD_PROMPT=true
-    elif [ "$CURRENT_PROVIDER" == "google" ] && [ -z "$CURRENT_GOOGLE_KEY" ]; then
-        SHOULD_PROMPT=true
-    elif [ "$CURRENT_PROVIDER" == "openrouter" ] && [ -z "$CURRENT_OR_KEY" ]; then
-        SHOULD_PROMPT=true
+    else
+        if [ -z "$CURRENT_PROVIDER" ] || [ "$CURRENT_PROVIDER" == "ollama" ]; then
+            SHOULD_PROMPT=true
+        elif [ "$CURRENT_PROVIDER" == "google" ] && [ -z "$CURRENT_GOOGLE_KEY" ]; then
+            SHOULD_PROMPT=true
+        elif [ "$CURRENT_PROVIDER" == "openrouter" ] && [ -z "$CURRENT_OR_KEY" ]; then
+            SHOULD_PROMPT=true
+        fi
     fi
+else
+    SHOULD_PROMPT=true
 fi
 
 if [ "$SHOULD_PROMPT" = true ]; then
@@ -252,20 +258,22 @@ if [ -n "$GRAPH_ENGINE_VAL" ]; then
     esac
 fi
 
-# Fallback to current config if not supplied via command line
-if [ -z "$DB_CHOICE" ] && [ -n "$CURRENT_DB_URL" ]; then
-    if [[ "$CURRENT_DB_URL" == *"sqlite"* ]]; then
-        DB_CHOICE="2"
-    elif [[ "$CURRENT_DB_URL" == *"postgres"* ]]; then
-        DB_CHOICE="1"
+# Fallback to current config if not supplied via command line and override is not requested
+if [ "$OVERRIDE_ENV" = false ]; then
+    if [ -z "$DB_CHOICE" ] && [ -n "$CURRENT_DB_URL" ]; then
+        if [[ "$CURRENT_DB_URL" == *"sqlite"* ]]; then
+            DB_CHOICE="2"
+        elif [[ "$CURRENT_DB_URL" == *"postgres"* ]]; then
+            DB_CHOICE="1"
+        fi
     fi
-fi
 
-if [ -z "$GRAPH_CHOICE" ] && [ -n "$CURRENT_GRAPH_ENGINE" ]; then
-    if [[ "$CURRENT_GRAPH_ENGINE" == "local" ]]; then
-        GRAPH_CHOICE="2"
-    elif [[ "$CURRENT_GRAPH_ENGINE" == "production" ]]; then
-        GRAPH_CHOICE="1"
+    if [ -z "$GRAPH_CHOICE" ] && [ -n "$CURRENT_GRAPH_ENGINE" ]; then
+        if [[ "$CURRENT_GRAPH_ENGINE" == "local" ]]; then
+            GRAPH_CHOICE="2"
+        elif [[ "$CURRENT_GRAPH_ENGINE" == "production" ]]; then
+            GRAPH_CHOICE="1"
+        fi
     fi
 fi
 
