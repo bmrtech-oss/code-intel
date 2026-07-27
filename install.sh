@@ -523,7 +523,8 @@ else
     fi
 
     for container in codeintel-api codeintel-worker; do
-        if podman ps -a --format '{{.Names}} {{.Status}}' 2>/dev/null | grep -Fxq "$container created"; then
+        # Use case-insensitive search and strip \r to handle MSYS carriage returns and capitalization differences
+        if podman ps -a --format '{{.Names}} {{.Status}}' 2>/dev/null | tr -d '\r' | grep -Fiq "$container Created"; then
             log_info "Starting $container from Created state..."
             podman start "$container" >/dev/null 2>&1 || true
         fi
