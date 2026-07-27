@@ -445,7 +445,7 @@ else
         COMPOSE_PROFILES="--profile ollama"
     fi
 
-    if ! $COMPOSE_CMD $COMPOSE_PROFILES --env-file "$ENV_FILE" up -d --build postgres redis; then
+    if ! $COMPOSE_CMD $COMPOSE_PROFILES --env-file "$ENV_FILE" up -d postgres redis; then
         log_error "Failed to start Postgres/Redis. Check disk space or logs."; exit 1
     fi
 
