@@ -17,12 +17,30 @@ from ..core.rules import RuleEngine
 from ..core.udf import LLMUDF
 from ..core.git_handler import GitRepoHandler
 from ..worker.tasks import queue, llm_queue, run_ingestion, generate_requirements_task
+from ..settings import ALLOWED_ORIGINS
 
 app = FastAPI(title="Code Intelligence Platform (Prod)", version="1.0.0")
 
+origins = list(ALLOWED_ORIGINS)
+common_origins = [
+    "tauri://localhost",
+    "http://tauri.localhost",
+    "http://localhost:1420",
+    "http://127.0.0.1:1420",
+    "http://localhost:5500",
+    "http://127.0.0.1:5500",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000"
+]
+for o in common_origins:
+    if o not in origins:
+        origins.append(o)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
