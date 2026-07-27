@@ -1,5 +1,4 @@
 import os
-import sys
 import pytest
 import importlib
 from unittest.mock import MagicMock, patch
