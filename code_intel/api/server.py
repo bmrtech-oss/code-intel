@@ -21,14 +21,9 @@ from ..settings import ALLOWED_ORIGINS
 
 app = FastAPI(title="Code Intelligence Platform (Prod)", version="1.0.0")
 
-origins = list(ALLOWED_ORIGINS)
-for tauri_origin in ["tauri://localhost", "http://tauri.localhost"]:
-    if tauri_origin not in origins:
-        origins.append(tauri_origin)
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
