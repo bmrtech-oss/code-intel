@@ -409,53 +409,66 @@ if ! command -v uv >/dev/null 2>&1; then
     exit 1
 fi
 
-if command -v podman-compose >/dev/null 2>&1; then
-    COMPOSE_CMD="podman-compose"
-elif command -v docker-compose >/dev/null 2>&1; then
-    COMPOSE_CMD="docker-compose"
-elif docker compose version >/dev/null 2>&1; then
-    COMPOSE_CMD="docker compose"
-else
-    log_error "docker-compose or podman-compose is required."; exit 1
-fi
-echo "✅ Using $COMPOSE_CMD"
-
-# Verify engine with safe timeout check (handles Windows/Git Bash compat)
-engine_responsive=false
-if command -v timeout >/dev/null 2>&1 && timeout --version >/dev/null 2>&1; then
-    if timeout 15s $COMPOSE_CMD ps >/dev/null 2>&1; then
-        engine_responsive=true
+check_engine_responsive() {
+    local cmd=$1
+    if ! command -v ${cmd%% *} >/dev/null 2>&1; then
+        return 1
     fi
-else
-    # Fallback to direct invocation if GNU timeout is not available
-    if $COMPOSE_CMD ps >/dev/null 2>&1; then
-        engine_responsive=true
-    fi
-fi
 
-if [ "$engine_responsive" = false ]; then
-    log_warn "Container engine is not responding. Attempting restart..."
+    # Test responsiveness of the underlying daemon (podman or docker)
+    local status_cmd="docker info"
+    if [[ "$cmd" == *"podman"* ]]; then
+        status_cmd="podman info"
+    fi
+
+    local responsive=false
+    if command -v timeout >/dev/null 2>&1 && timeout --version >/dev/null 2>&1; then
+        if timeout 10s $status_cmd >/dev/null 2>&1; then
+            responsive=true
+        fi
+    else
+        if $status_cmd >/dev/null 2>&1; then
+            responsive=true
+        fi
+    fi
+
+    if [ "$responsive" = true ]; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+COMPOSE_CMD=""
+for candidate in "podman-compose" "docker-compose" "docker compose"; do
+    if check_engine_responsive "$candidate"; then
+        COMPOSE_CMD="$candidate"
+        break
+    fi
+done
+
+if [ -z "$COMPOSE_CMD" ]; then
+    log_warn "No responsive container engine found. Attempting to restart services..."
     if command -v systemctl >/dev/null 2>&1; then
         sudo systemctl restart podman.socket podman.service 2>/dev/null || true
+        sudo systemctl restart docker.socket docker.service 2>/dev/null || true
     fi
     sleep 5
 
-    engine_responsive_second=false
-    if command -v timeout >/dev/null 2>&1 && timeout --version >/dev/null 2>&1; then
-        if timeout 15s $COMPOSE_CMD ps >/dev/null 2>&1; then
-            engine_responsive_second=true
+    for candidate in "podman-compose" "docker-compose" "docker compose"; do
+        if check_engine_responsive "$candidate"; then
+            COMPOSE_CMD="$candidate"
+            break
         fi
-    else
-        if $COMPOSE_CMD ps >/dev/null 2>&1; then
-            engine_responsive_second=true
-        fi
-    fi
-
-    if [ "$engine_responsive_second" = false ]; then
-        echo "❌ Error: Container engine is still not responding. Run: podman system reset"
-        exit 1
-    fi
+    done
 fi
+
+if [ -z "$COMPOSE_CMD" ]; then
+    log_error "docker-compose or podman-compose is required and must be responsive."
+    exit 1
+fi
+
+echo "✅ Using $COMPOSE_CMD"
 
 # 6. Setup Python environment
 if [ "$SKIP_VENV" = false ]; then
