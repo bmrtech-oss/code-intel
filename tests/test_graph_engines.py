@@ -4,10 +4,6 @@ import pytest
 import importlib
 from unittest.mock import MagicMock, patch
 
-# Stub graphqlite module if not installed, to support CI environments where it's optional
-if "graphqlite" not in sys.modules:
-    sys.modules["graphqlite"] = MagicMock()
-
 from code_intel.core.dataflow import DataflowEngine, ProductionGraphEngine, LocalGraphEngine
 
 class MockStorage:
@@ -50,7 +46,8 @@ def test_engine_factory_selection():
         importlib.reload(code_intel.settings)
         # Mock graphqlite to avoid runtime extension error if not supported on host python
         with patch("code_intel.core.dataflow.GRAPHQLITE_AVAILABLE", True):
-            with patch("graphqlite.Graph"):
+            with patch("code_intel.core.dataflow.graphqlite") as mock_graphqlite:
+                mock_graphqlite.Graph.return_value = MagicMock()
                 engine = DataflowEngine(storage)
                 assert isinstance(engine.engine, LocalGraphEngine)
 
@@ -58,9 +55,9 @@ def test_engine_factory_selection():
 async def test_local_graph_engine_cypher_queries():
     storage = MockStorage()
     with patch("code_intel.core.dataflow.GRAPHQLITE_AVAILABLE", True):
-        with patch("graphqlite.Graph") as mock_graph_cls:
+        with patch("code_intel.core.dataflow.graphqlite") as mock_graphqlite:
             mock_graph = MagicMock()
-            mock_graph_cls.return_value = mock_graph
+            mock_graphqlite.Graph.return_value = mock_graph
 
             # Setup mock query results for transitive calls
             mock_graph.query.return_value = [
@@ -84,9 +81,9 @@ async def test_local_graph_engine_cypher_queries():
 async def test_local_graph_engine_impact_analysis():
     storage = MockStorage()
     with patch("code_intel.core.dataflow.GRAPHQLITE_AVAILABLE", True):
-        with patch("graphqlite.Graph") as mock_graph_cls:
+        with patch("code_intel.core.dataflow.graphqlite") as mock_graphqlite:
             mock_graph = MagicMock()
-            mock_graph_cls.return_value = mock_graph
+            mock_graphqlite.Graph.return_value = mock_graph
 
             mock_graph.query.return_value = [
                 {"caller": "B", "depth": 1},
@@ -111,9 +108,9 @@ async def test_local_graph_engine_impact_analysis():
 async def test_local_graph_engine_rebuild():
     storage = MockStorage()
     with patch("code_intel.core.dataflow.GRAPHQLITE_AVAILABLE", True):
-        with patch("graphqlite.Graph") as mock_graph_cls:
+        with patch("code_intel.core.dataflow.graphqlite") as mock_graphqlite:
             mock_graph = MagicMock()
-            mock_graph_cls.return_value = mock_graph
+            mock_graphqlite.Graph.return_value = mock_graph
 
             engine = LocalGraphEngine(storage)
             await engine.rebuild_graph("v1")

@@ -9,6 +9,7 @@ try:
     GRAPHQLITE_AVAILABLE = True
     GRAPHQLITE_IMPORT_ERROR = None
 except Exception as e:
+    graphqlite = None
     GRAPHQLITE_AVAILABLE = False
     GRAPHQLITE_IMPORT_ERROR = str(e)
 
