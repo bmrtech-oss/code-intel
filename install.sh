@@ -125,11 +125,11 @@ find code_intel -type d -not -path '*/.*' -not -path '*/__pycache__*' | while re
   touch "$d/__init__.py"
 done
 
-# Validate package and imports using verify_pkg.py
-if command -v python3 >/dev/null 2>&1; then
-    python3 scripts/verify_pkg.py || log_warn "Package verification returned non-zero, continuing..."
-elif command -v python >/dev/null 2>&1; then
+# Validate package and imports using verify_pkg.py (prioritize python over python3 to avoid Windows Store python3 dummy alias bugs)
+if command -v python >/dev/null 2>&1; then
     python scripts/verify_pkg.py || log_warn "Package verification returned non-zero, continuing..."
+elif command -v python3 >/dev/null 2>&1; then
+    python3 scripts/verify_pkg.py || log_warn "Package verification returned non-zero, continuing..."
 fi
 
 # 2. Mandatory LLM Configuration Prompt
