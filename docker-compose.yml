@@ -1,1 +1,131 @@
-podman-compose.yml
+version: '3.8'
+
+services:
+  postgres:
+    image: docker.io/pgvector/pgvector:pg16
+    container_name: codeintel-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: codeintel
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: docker.io/redis:7-alpine
+    container_name: codeintel-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  ollama:
+    profiles: ["ollama"]
+    image: docker.io/ollama/ollama:latest
+    container_name: codeintel-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_models:/root/.ollama
+    environment:
+      - OLLAMA_HOST=0.0.0.0
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .
+      args:
+        TIER: "${CODEINTEL_TIER:-minimal}"
+    image: codeintel-api:latest
+    container_name: codeintel-api
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=${DATABASE_URL_CONTAINER:-postgresql+asyncpg://postgres:password@postgres:5432/codeintel}
+      - GRAPH_ENGINE=${GRAPH_ENGINE:-production}
+      - GRAPHQLITE_DB_PATH=${GRAPHQLITE_DB_PATH:-code_intel_graph.db}
+      - REDIS_HOST=redis
+      - USE_BITEMPORAL=true
+      - OLLAMA_URL=http://ollama:11434
+      - LLM_MODEL=phi3:mini
+      - LLM_TEMPERATURE=0.0
+      - PYTHONPATH=/app
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    volumes:
+      - ./code_intel:/app/code_intel:Z
+      - ./data:/app/data:Z
+      - ./prompts:/app/prompts:ro,Z
+    # Start through the module entry point to avoid console-script import issues
+    command: ["python", "-m", "code_intel", "serve", "--host", "0.0.0.0", "--port", "8000"]
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+      args:
+        TIER: "${CODEINTEL_TIER:-minimal}"
+    image: codeintel-worker:latest
+    container_name: codeintel-worker
+    environment:
+      - DATABASE_URL=${DATABASE_URL_CONTAINER:-postgresql+asyncpg://postgres:password@postgres:5432/codeintel}
+      - GRAPH_ENGINE=${GRAPH_ENGINE:-production}
+      - GRAPHQLITE_DB_PATH=${GRAPHQLITE_DB_PATH:-code_intel_graph.db}
+      - REDIS_HOST=redis
+      - USE_BITEMPORAL=true
+      - OLLAMA_URL=http://ollama:11434
+      - PYTHONPATH=/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    volumes:
+      - ./code_intel:/app/code_intel
+    # Use rq directly as it is installed in the venv
+    command: ["rq", "worker", "ingestion", "llm"]
+    restart: unless-stopped
+
+  mcp-server:
+    profiles: ["mcp"]
+    build:
+      context: .
+      args:
+        TIER: "${CODEINTEL_TIER:-minimal}"
+    image: codeintel-mcp:latest
+    container_name: codeintel-mcp
+    environment:
+      - DATABASE_URL=${DATABASE_URL_CONTAINER:-postgresql+asyncpg://postgres:password@postgres:5432/codeintel}
+      - GRAPH_ENGINE=${GRAPH_ENGINE:-production}
+      - GRAPHQLITE_DB_PATH=${GRAPHQLITE_DB_PATH:-code_intel_graph.db}
+      - REDIS_HOST=redis
+      - USE_BITEMPORAL=true
+      - PYTHONPATH=/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    command: ["python", "-m", "code_intel", "mcp"]
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+  ollama_models:
