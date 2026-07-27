@@ -231,9 +231,9 @@ if [ -z "$GRAPH_CHOICE" ] && [ -n "$CURRENT_GRAPH_ENGINE" ]; then
     fi
 fi
 
-# Prompt if not determined and we are prompting
+# Prompt if not determined and running interactively
 if [ -z "$DB_CHOICE" ]; then
-    if [ "$SHOULD_PROMPT" = true ] && [ -t 0 ]; then
+    if [ -t 0 ] && [ -z "${CI:-}" ]; then
         echo ""
         echo -e "${CYAN}💾 Database Backend Configuration${NC}"
         echo "----------------------------"
@@ -262,7 +262,7 @@ case "$DB_CHOICE" in
 esac
 
 if [ -z "$GRAPH_CHOICE" ]; then
-    if [ "$SHOULD_PROMPT" = true ] && [ -t 0 ]; then
+    if [ -t 0 ] && [ -z "${CI:-}" ]; then
         echo ""
         echo -e "${CYAN}🔌 Graph Engine Configuration${NC}"
         echo "----------------------------"
@@ -440,19 +440,23 @@ else
         log_error "Failed to start Postgres/Redis. Check disk space or logs."; exit 1
     fi
 
-    log_info "Waiting for Postgres to become ready..."
-    COUNT=0
-    while [ $COUNT -lt 60 ]; do
-        if $COMPOSE_CMD exec -i postgres pg_isready -U postgres >/dev/null 2>&1; then
-            break
-        fi
-        sleep 5; COUNT=$((COUNT + 1))
-    done
+    if [ "$DB_CHOICE" = "1" ]; then
+        log_info "Waiting for Postgres to become ready..."
+        COUNT=0
+        while [ $COUNT -lt 60 ]; do
+            if $COMPOSE_CMD exec -i postgres pg_isready -U postgres >/dev/null 2>&1; then
+                break
+            fi
+            sleep 5; COUNT=$((COUNT + 1))
+        done
 
-    if [ $COUNT -eq 60 ]; then
-        log_error "Postgres did not become ready in time."
-        $COMPOSE_CMD logs postgres | tail -n 20
-        exit 1
+        if [ $COUNT -eq 60 ]; then
+            log_error "Postgres did not become ready in time."
+            $COMPOSE_CMD logs postgres | tail -n 20
+            exit 1
+        fi
+    else
+        log_info "SQLite database backend selected; skipping Postgres readiness wait loop."
     fi
 
     log_info "Waiting for Redis to become ready..."
