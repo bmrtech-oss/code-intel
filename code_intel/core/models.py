@@ -1,8 +1,46 @@
-from sqlalchemy import Column, String, Integer, DateTime, Text, BigInteger, Float, UniqueConstraint, Boolean, ARRAY
+import json
+from sqlalchemy import Column, String, Integer, DateTime, Text, BigInteger, Float, UniqueConstraint, Boolean
 from sqlalchemy.sql import func
 from sqlalchemy.orm import declarative_base
 from pgvector.sqlalchemy import Vector
 from datetime import datetime
+from sqlalchemy.types import TypeDecorator
+from code_intel.settings import DATABASE_URL
+
+# Check if database URL indicates SQLite
+if "sqlite" in DATABASE_URL:
+    from sqlalchemy.ext.compiler import compiles
+    from sqlalchemy.types import BigInteger
+
+    @compiles(BigInteger, "sqlite")
+    def compile_big_int_sqlite(type_, compiler, **kw):
+        return "INTEGER"
+
+    class SQLiteArray(TypeDecorator):
+        impl = Text
+        cache_ok = True
+
+        def __init__(self, item_type=None, *args, **kwargs):
+            self.item_type = item_type
+            super().__init__(*args, **kwargs)
+
+        def process_bind_param(self, value, dialect):
+            if value is not None:
+                return json.dumps(value)
+            return None
+
+        def process_result_value(self, value, dialect):
+            if value is not None:
+                try:
+                    return json.loads(value)
+                except Exception:
+                    return []
+            return None
+
+    def ARRAY(item_type, *args, **kwargs):
+        return SQLiteArray(item_type, *args, **kwargs)
+else:
+    from sqlalchemy import ARRAY
 
 Base = declarative_base()
 

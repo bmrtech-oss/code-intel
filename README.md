@@ -17,7 +17,7 @@ graph TB
     subgraph "Unified Data Plane"
         API[FastAPI]
         Workspace[Workspace Manager<br/>Redis-backed Git-DAG]
-        Engine[Dataflow Engine<br/>SQL + Recursive CTEs]
+        Engine[Pluggable Dataflow Engine<br/>PostgreSQL CTE / SQLite GraphQLite]
         subgraph "Optimized Storage"
             Store[(Write Model<br/>Append-only Facts)]
             ReadModel[(Read Model<br/>Graph Index)]
@@ -47,6 +47,7 @@ graph TB
 ## 🚀 Key Features
 
 - **Unified Fact Model**: All code data (symbols, calls, data flows) stored as versioned relational facts.
+- **Pluggable Graph Engine**: Switch seamlessly between a high-performance PostgreSQL recursive CTE engine (production) and a zero-config, embedded SQLite + `graphqlite` engine for Cypher queries and graph algorithms (local development) via `GRAPH_ENGINE=local`.
 - **Git-DAG Topological Schema**: Native support for branches, merges, and rebases using `introduced_in`, `modified_in`, and `deleted_in` metadata.
 - **Bitset-Based Visibility**: Sub-microsecond ancestry filtering using O(1) bitwise operations, optimized for massive commit histories (>100k commits).
 - **True Delta (XOR) Sync**: High-performance incremental cache synchronization that only transmits and applies changes between commit states.
@@ -245,6 +246,36 @@ Run Ollama locally and pull the required model:
 ```bash
 ollama run phi3:mini
 ```
+
+### 4. Pluggable Graph Engine (Local SQLite + GraphQLite)
+
+Code-Intel features a **pluggable graph engine architecture** that allows local development entirely offline without requiring a running PostgreSQL instance.
+
+#### Enabling the Local Graph Engine
+To use the embedded SQLite + GraphQLite engine, configure the following environment variables:
+```bash
+export GRAPH_ENGINE="local"
+export GRAPHQLITE_DB_PATH="code_intel_graph.db"
+```
+
+#### Rebuilding/Synchronizing the Local Graph
+To sync and populate the embedded GraphQLite database from your repository facts, run the rebuild command:
+```bash
+uv run code-intel graph-rebuild <version_name> --local
+```
+
+#### Querying with Cypher (Examples)
+Once loaded, you can query your graph using Cypher patterns. For example:
+- **Transitive Calls**:
+  ```cypher
+  MATCH (caller)-[:CALLS*]->(callee)
+  RETURN DISTINCT caller.id AS caller, callee.id AS callee
+  ```
+- **Impact Analysis (Reverse Callers)**:
+  ```cypher
+  MATCH p = (callee {id: "my_function"})<-[:CALLS*1..3]-(caller)
+  RETURN caller.id AS caller, length(p) AS depth
+  ```
 
 ## Notes
 

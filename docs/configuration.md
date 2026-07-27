@@ -112,3 +112,43 @@ You can run the full strategic demo on your own repository to see how Code-Intel
 ```bash
 ./demo.sh --repo-url https://github.com/your/repo.git --version-name my-project
 ```
+
+---
+
+## 🔌 Pluggable Graph Engine & SQLite Fallbacks
+
+For local developers, Code-Intel supports a fully **pluggable graph engine architecture** and seamless **SQLite array serialization** support to run without any heavyweight dependencies like running PostgreSQL.
+
+### 1. Database Option: SQLite Fallback Array Serialization
+
+If you configure your `DATABASE_URL` to point to a local SQLite database (e.g. `sqlite+aiosqlite:///codeintel.db`), the system automatically:
+- Detects the SQLite connection.
+- Overrides the SQLAlchemy `ARRAY` type with `SQLiteArray` (serializing lists of integers to JSON text strings).
+- Compiles `BigInteger` primary keys as `INTEGER` columns so SQLite's internal autoincrement mechanism operates natively.
+
+No schema modifications are required when switching databases.
+
+### 2. Graph Engine Options
+
+Configure the graph query engine using the `GRAPH_ENGINE` environment variable:
+
+| Engine Name | Environment Variable | Database Required | Engine Tech | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| **Production** | `GRAPH_ENGINE=production` | PostgreSQL (or SQLite fallback) | SQL Recursive CTEs | Runs topological lookups and transitive closures via SQL CTEs on read models. |
+| **Local / GraphQLite** | `GRAPH_ENGINE=local` | SQLite + `graphqlite` extension | Cypher & Graph Algos | Leverages embedded GraphQLite for graph traversals and Cypher queries entirely offline. |
+
+#### Setup & Enforcing the Local Graph Engine:
+To enable GraphQLite mode:
+1. Ensure `graphqlite` is installed:
+   ```bash
+   uv pip install graphqlite
+   ```
+2. Export settings:
+   ```bash
+   export GRAPH_ENGINE="local"
+   export GRAPHQLITE_DB_PATH="code_intel_graph.db"
+   ```
+3. Rebuild/synchronize the facts into the local graph:
+   ```bash
+   uv run code-intel graph-rebuild <version_name> --local
+   ```

@@ -117,10 +117,26 @@ class VersionedStorage:
         Mark derived facts that depend on this fact as stale.
         Recursive walk if a derived fact depends on another derived fact.
         """
-        if is_derived:
-            query = text("UPDATE derived_facts SET is_stale = TRUE WHERE :fid = ANY(depends_on_derived) AND is_stale = FALSE RETURNING id")
+        if "sqlite" in DATABASE_URL:
+            if is_derived:
+                query = text("""
+                    UPDATE derived_facts SET is_stale = TRUE
+                    WHERE is_stale = FALSE AND EXISTS (
+                        SELECT 1 FROM json_each(depends_on_derived) WHERE value = :fid
+                    ) RETURNING id
+                """)
+            else:
+                query = text("""
+                    UPDATE derived_facts SET is_stale = TRUE
+                    WHERE is_stale = FALSE AND EXISTS (
+                        SELECT 1 FROM json_each(depends_on) WHERE value = :fid
+                    ) RETURNING id
+                """)
         else:
-            query = text("UPDATE derived_facts SET is_stale = TRUE WHERE :fid = ANY(depends_on) AND is_stale = FALSE RETURNING id")
+            if is_derived:
+                query = text("UPDATE derived_facts SET is_stale = TRUE WHERE :fid = ANY(depends_on_derived) AND is_stale = FALSE RETURNING id")
+            else:
+                query = text("UPDATE derived_facts SET is_stale = TRUE WHERE :fid = ANY(depends_on) AND is_stale = FALSE RETURNING id")
 
         result = await self.session.execute(query, {"fid": fact_id})
         stale_ids = [row[0] for row in result.all()]
@@ -141,6 +157,7 @@ class VersionedStorage:
             last_validated=datetime.utcnow()
         )
         self.session.add(df)
+        await self.session.flush()
 
     async def get_derived_fact(self, fact_type: str, version: str, entity_id: Optional[str] = None) -> Optional[DerivedFact]:
         query = "SELECT * FROM derived_facts WHERE fact_type = :ft AND version = :v AND is_stale = FALSE"
@@ -158,10 +175,26 @@ class VersionedStorage:
         """
         Query the invalidation graph: "what depends on this fact?"
         """
-        if is_derived:
-            query = text("SELECT id, fact_type, entity_id, is_stale FROM derived_facts WHERE :fid = ANY(depends_on_derived)")
+        if "sqlite" in DATABASE_URL:
+            if is_derived:
+                query = text("""
+                    SELECT id, fact_type, entity_id, is_stale FROM derived_facts
+                    WHERE EXISTS (
+                        SELECT 1 FROM json_each(depends_on_derived) WHERE value = :fid
+                    )
+                """)
+            else:
+                query = text("""
+                    SELECT id, fact_type, entity_id, is_stale FROM derived_facts
+                    WHERE EXISTS (
+                        SELECT 1 FROM json_each(depends_on) WHERE value = :fid
+                    )
+                """)
         else:
-            query = text("SELECT id, fact_type, entity_id, is_stale FROM derived_facts WHERE :fid = ANY(depends_on)")
+            if is_derived:
+                query = text("SELECT id, fact_type, entity_id, is_stale FROM derived_facts WHERE :fid = ANY(depends_on_derived)")
+            else:
+                query = text("SELECT id, fact_type, entity_id, is_stale FROM derived_facts WHERE :fid = ANY(depends_on)")
 
         result = await self.session.execute(query, {"fid": fact_id})
         return [dict(row) for row in result.mappings().all()]
@@ -184,7 +217,15 @@ class VersionedStorage:
         """
         Query provenance: "what artifacts were generated from this fact?"
         """
-        query = text("SELECT id, artifact_type, entity_id, is_verified FROM llm_artifacts WHERE :fid = ANY(grounded_in)")
+        if "sqlite" in DATABASE_URL:
+            query = text("""
+                SELECT id, artifact_type, entity_id, is_verified FROM llm_artifacts
+                WHERE EXISTS (
+                    SELECT 1 FROM json_each(grounded_in) WHERE value = :fid
+                )
+            """)
+        else:
+            query = text("SELECT id, artifact_type, entity_id, is_verified FROM llm_artifacts WHERE :fid = ANY(grounded_in)")
         result = await self.session.execute(query, {"fid": fact_id})
         return [dict(row) for row in result.mappings().all()]
 

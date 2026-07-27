@@ -184,6 +184,25 @@ def setup_claude():
     typer.echo(f"✅ Code-Intel MCP added to Claude Desktop at {config_path}")
 
 @app.command()
+def graph_rebuild(version: str, local: bool = False):
+    """Sync and rebuild the GraphQLite local graph or read models from database facts."""
+    if local:
+        import os
+        os.environ["GRAPH_ENGINE"] = "local"
+        typer.echo("Enforcing GRAPH_ENGINE=local for this rebuild.")
+
+    async def _run():
+        async with AsyncSessionLocal() as session:
+            storage = VersionedStorage(session)
+            from ..core.dataflow import DataflowEngine
+            engine = DataflowEngine(storage)
+            typer.echo(f"Rebuilding graph for version {version}...")
+            await engine.rebuild_graph(version)
+            typer.echo("✅ Graph rebuilt successfully.")
+
+    asyncio.run(_run())
+
+@app.command()
 def setup_cursor():
     """Add .cursorrules to the current directory."""
     from pathlib import Path
