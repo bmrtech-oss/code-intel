@@ -1,7 +1,13 @@
 import os
+import sys
 import pytest
 import importlib
 from unittest.mock import MagicMock, patch
+
+# Stub graphqlite module if not installed, to support CI environments where it's optional
+if "graphqlite" not in sys.modules:
+    sys.modules["graphqlite"] = MagicMock()
+
 from code_intel.core.dataflow import DataflowEngine, ProductionGraphEngine, LocalGraphEngine
 
 class MockStorage:
