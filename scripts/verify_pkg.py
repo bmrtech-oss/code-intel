@@ -23,13 +23,21 @@ def verify():
         "code_intel/cache"
     ]
 
+    def safe_print(is_ok, message):
+        try:
+            emoji = "✅" if is_ok else "❌"
+            print(f"{emoji} {message}")
+        except UnicodeEncodeError:
+            prefix = "[OK]" if is_ok else "[FAIL]"
+            print(f"{prefix} {message}")
+
     all_passed = True
     for pkg in required_pkgs:
         init_file = os.path.join(base_dir, pkg, "__init__.py")
         if os.path.exists(init_file):
-            print(f"✅ {pkg}/__init__.py exists")
+            safe_print(True, f"{pkg}/__init__.py exists")
         else:
-            print(f"❌ {pkg}/__init__.py MISSING")
+            safe_print(False, f"{pkg}/__init__.py MISSING")
             all_passed = False
 
     print("\n--- Import Verification ---")
@@ -48,9 +56,9 @@ def verify():
     for mod_name in modules_to_test:
         try:
             importlib.import_module(mod_name)
-            print(f"✅ Imported {mod_name}")
+            safe_print(True, f"Imported {mod_name}")
         except ImportError as e:
-            print(f"❌ Failed to import {mod_name}: {e}")
+            safe_print(False, f"Failed to import {mod_name}: {e}")
             all_passed = False
 
     if not all_passed:
