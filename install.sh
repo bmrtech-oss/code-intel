@@ -20,12 +20,24 @@ REQUIRED_SPACE_GB=2
 SKIP_VENV=false
 PERFORMANCE_TIER="minimal"
 TIER_PROVIDED=false
+DB_BACKEND=""
+GRAPH_ENGINE_VAL=""
 
 # --- Functions ---
 log_info() { echo -e "${BLUE}info:${NC} $1"; }
 log_success() { echo -e "${GREEN}success:${NC} $1"; }
 log_warn() { echo -e "${YELLOW}warning:${NC} $1"; }
 log_error() { echo -e "${RED}error:${NC} $1"; }
+
+update_env_var() {
+    local key=$1
+    local val=$2
+    if grep -q "^${key}=" "$ENV_FILE" 2>/dev/null; then
+        sed -i "s|^${key}=.*|${key}=${val}|" "$ENV_FILE"
+    else
+        echo "${key}=${val}" >> "$ENV_FILE"
+    fi
+}
 
 show_help() {
     echo "Usage: ./install.sh [OPTIONS]"
@@ -38,6 +50,8 @@ show_help() {
     echo "  -p, --purge           Run cleanup (purge.sh) before starting"
     echo "  --skip-venv           Skip creating local venv"
     echo "  --tier <tier>         Set performance tier (minimal|standard|high)"
+    echo "  --db <backend>        Set database backend (postgres|sqlite)"
+    echo "  --graph-engine <eng>  Set graph engine (production|local)"
     echo "  -h, --help            Show this help message"
 }
 
@@ -79,6 +93,8 @@ while [[ $# -gt 0 ]]; do
         -p|--purge) PURGE=true; shift ;;
         --skip-venv) SKIP_VENV=true; shift ;;
         --tier) PERFORMANCE_TIER="$2"; TIER_PROVIDED=true; shift 2 ;;
+        --db) DB_BACKEND="$2"; shift 2 ;;
+        --graph-engine) GRAPH_ENGINE_VAL="$2"; shift 2 ;;
         -h|--help) show_help; exit 0 ;;
         *) log_error "Unknown option: $1"; show_help; exit 1 ;;
     esac
@@ -99,6 +115,13 @@ log_info "Verifying package structure..."
 find code_intel -type d -not -path '*/.*' -not -path '*/__pycache__*' | while read d; do
   touch "$d/__init__.py"
 done
+
+# Validate package and imports using verify_pkg.py
+if command -v python3 >/dev/null 2>&1; then
+    python3 scripts/verify_pkg.py || log_warn "Package verification returned non-zero, continuing..."
+elif command -v python >/dev/null 2>&1; then
+    python scripts/verify_pkg.py || log_warn "Package verification returned non-zero, continuing..."
+fi
 
 # 2. Mandatory LLM Configuration Prompt
 CURRENT_PROVIDER=$(grep "^LLM_PROVIDER=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2 | tr -d '"' || echo "")
@@ -138,19 +161,15 @@ if [ "$SHOULD_PROMPT" = true ]; then
                 read -p "Enter Model Name (default: $DEFAULT_MODEL): " INPUT_MODEL
                 INPUT_MODEL=${INPUT_MODEL:-$DEFAULT_MODEL}
 
-                sed -i "s|^LLM_PROVIDER=.*|LLM_PROVIDER=openrouter|" "$ENV_FILE"
-                sed -i "s|^LLM_MODEL=.*|LLM_MODEL=$INPUT_MODEL|" "$ENV_FILE"
-                if grep -q "^LLM_API_KEY=" "$ENV_FILE"; then
-                    sed -i "s|^LLM_API_KEY=.*|LLM_API_KEY=$INPUT_KEY|" "$ENV_FILE"
-                else
-                    echo "LLM_API_KEY=$INPUT_KEY" >> "$ENV_FILE"
-                fi
+                update_env_var "LLM_PROVIDER" "openrouter"
+                update_env_var "LLM_MODEL" "$INPUT_MODEL"
+                update_env_var "LLM_API_KEY" "$INPUT_KEY"
                 SKIP_MODELS=true
             fi
             ;;
         3)
-            sed -i "s|^LLM_PROVIDER=.*|LLM_PROVIDER=ollama|" "$ENV_FILE"
-            sed -i "s|^LLM_MODEL=.*|LLM_MODEL=phi3:mini|" "$ENV_FILE"
+            update_env_var "LLM_PROVIDER" "ollama"
+            update_env_var "LLM_MODEL" "phi3:mini"
             ;;
         *) # Default: Google Gemini
             read -p "Enter Google Gemini API Key: " INPUT_KEY
@@ -159,22 +178,116 @@ if [ "$SHOULD_PROMPT" = true ]; then
                 read -p "Enter Model Name (default: $DEFAULT_MODEL): " INPUT_MODEL
                 INPUT_MODEL=${INPUT_MODEL:-$DEFAULT_MODEL}
 
-                sed -i "s|^LLM_PROVIDER=.*|LLM_PROVIDER=google|" "$ENV_FILE"
-                sed -i "s|^LLM_MODEL=.*|LLM_MODEL=$INPUT_MODEL|" "$ENV_FILE"
-                if grep -q "^GOOGLE_API_KEY=" "$ENV_FILE"; then
-                    sed -i "s|^GOOGLE_API_KEY=.*|GOOGLE_API_KEY=$INPUT_KEY|" "$ENV_FILE"
-                else
-                    echo "GOOGLE_API_KEY=$INPUT_KEY" >> "$ENV_FILE"
-                fi
+                update_env_var "LLM_PROVIDER" "google"
+                update_env_var "LLM_MODEL" "$INPUT_MODEL"
+                update_env_var "GOOGLE_API_KEY" "$INPUT_KEY"
                 SKIP_MODELS=true
                 log_success "Configured for Google Gemini ($INPUT_MODEL)."
             else
                 echo "⚠️ No key provided. Falling back to Ollama local defaults."
-                sed -i "s|^LLM_PROVIDER=.*|LLM_PROVIDER=ollama|" "$ENV_FILE"
+                update_env_var "LLM_PROVIDER" "ollama"
             fi
             ;;
     esac
 fi
+
+# 2.1 Pluggable Database & Graph Engine Configuration
+CURRENT_DB_URL=$(grep "^DATABASE_URL=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2 | tr -d '"' || echo "")
+CURRENT_GRAPH_ENGINE=$(grep "^GRAPH_ENGINE=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2 | tr -d '"' || echo "")
+
+DB_CHOICE=""
+GRAPH_CHOICE=""
+
+if [ -n "$DB_BACKEND" ]; then
+    case "$DB_BACKEND" in
+        sqlite) DB_CHOICE="2" ;;
+        postgres) DB_CHOICE="1" ;;
+        *) log_error "Invalid database backend '$DB_BACKEND'. Expected one of: postgres, sqlite"; exit 1 ;;
+    esac
+fi
+
+if [ -n "$GRAPH_ENGINE_VAL" ]; then
+    case "$GRAPH_ENGINE_VAL" in
+        local) GRAPH_CHOICE="2" ;;
+        production) GRAPH_CHOICE="1" ;;
+        *) log_error "Invalid graph engine '$GRAPH_ENGINE_VAL'. Expected one of: production, local"; exit 1 ;;
+    esac
+fi
+
+# Fallback to current config if not supplied via command line
+if [ -z "$DB_CHOICE" ] && [ -n "$CURRENT_DB_URL" ]; then
+    if [[ "$CURRENT_DB_URL" == *"sqlite"* ]]; then
+        DB_CHOICE="2"
+    elif [[ "$CURRENT_DB_URL" == *"postgres"* ]]; then
+        DB_CHOICE="1"
+    fi
+fi
+
+if [ -z "$GRAPH_CHOICE" ] && [ -n "$CURRENT_GRAPH_ENGINE" ]; then
+    if [[ "$CURRENT_GRAPH_ENGINE" == "local" ]]; then
+        GRAPH_CHOICE="2"
+    elif [[ "$CURRENT_GRAPH_ENGINE" == "production" ]]; then
+        GRAPH_CHOICE="1"
+    fi
+fi
+
+# Prompt if not determined and we are prompting
+if [ -z "$DB_CHOICE" ]; then
+    if [ "$SHOULD_PROMPT" = true ] && [ -t 0 ]; then
+        echo ""
+        echo -e "${CYAN}💾 Database Backend Configuration${NC}"
+        echo "----------------------------"
+        echo "Choose the database backend for Code-Intel:"
+        echo "1) PostgreSQL (Remote/Containerized - Recommended for Production) [DEFAULT]"
+        echo "2) SQLite (Local File-Backed - Lightweight, Zero-Config Fallback)"
+        read -p "Selection (1/2): " -n 1 -r TMP_CHOICE
+        echo ""
+        DB_CHOICE="${TMP_CHOICE:-1}"
+    else
+        DB_CHOICE="1"
+    fi
+fi
+
+case "$DB_CHOICE" in
+    2)
+        update_env_var "DATABASE_URL" "sqlite+aiosqlite:///data/codeintel.db"
+        update_env_var "DATABASE_URL_CONTAINER" "sqlite+aiosqlite:///data/codeintel.db"
+        log_success "Configured SQLite as the database backend."
+        ;;
+    *)
+        update_env_var "DATABASE_URL" "postgresql+asyncpg://postgres:password@localhost:5432/codeintel"
+        update_env_var "DATABASE_URL_CONTAINER" "postgresql+asyncpg://postgres:password@postgres:5432/codeintel"
+        log_success "Configured PostgreSQL as the database backend."
+        ;;
+esac
+
+if [ -z "$GRAPH_CHOICE" ]; then
+    if [ "$SHOULD_PROMPT" = true ] && [ -t 0 ]; then
+        echo ""
+        echo -e "${CYAN}🔌 Graph Engine Configuration${NC}"
+        echo "----------------------------"
+        echo "Choose the graph execution engine:"
+        echo "1) Production (SQL Recursive CTEs - High-Performance SQL) [DEFAULT]"
+        echo "2) Local (Embedded SQLite + GraphQLite - Leverages Cypher & Graph Algos)"
+        read -p "Selection (1/2): " -n 1 -r TMP_CHOICE
+        echo ""
+        GRAPH_CHOICE="${TMP_CHOICE:-1}"
+    else
+        GRAPH_CHOICE="1"
+    fi
+fi
+
+case "$GRAPH_CHOICE" in
+    2)
+        update_env_var "GRAPH_ENGINE" "local"
+        update_env_var "GRAPHQLITE_DB_PATH" "data/code_intel_graph.db"
+        log_success "Configured Local Graph Engine (SQLite + GraphQLite)."
+        ;;
+    *)
+        update_env_var "GRAPH_ENGINE" "production"
+        log_success "Configured Production Graph Engine (SQL CTEs)."
+        ;;
+esac
 
 # 3. Performance Tier Selection
 case "$PERFORMANCE_TIER" in

@@ -53,7 +53,9 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - DATABASE_URL=postgresql+asyncpg://postgres:password@postgres:5432/codeintel
+      - DATABASE_URL=${DATABASE_URL_CONTAINER:-postgresql+asyncpg://postgres:password@postgres:5432/codeintel}
+      - GRAPH_ENGINE=${GRAPH_ENGINE:-production}
+      - GRAPHQLITE_DB_PATH=${GRAPHQLITE_DB_PATH:-code_intel_graph.db}
       - REDIS_HOST=redis
       - USE_BITEMPORAL=true
       - OLLAMA_URL=http://ollama:11434
@@ -82,7 +84,9 @@ services:
     image: codeintel-worker:latest
     container_name: codeintel-worker
     environment:
-      - DATABASE_URL=postgresql+asyncpg://postgres:password@postgres:5432/codeintel
+      - DATABASE_URL=${DATABASE_URL_CONTAINER:-postgresql+asyncpg://postgres:password@postgres:5432/codeintel}
+      - GRAPH_ENGINE=${GRAPH_ENGINE:-production}
+      - GRAPHQLITE_DB_PATH=${GRAPHQLITE_DB_PATH:-code_intel_graph.db}
       - REDIS_HOST=redis
       - USE_BITEMPORAL=true
       - OLLAMA_URL=http://ollama:11434
@@ -107,7 +111,9 @@ services:
     image: codeintel-mcp:latest
     container_name: codeintel-mcp
     environment:
-      - DATABASE_URL=postgresql+asyncpg://postgres:password@postgres:5432/codeintel
+      - DATABASE_URL=${DATABASE_URL_CONTAINER:-postgresql+asyncpg://postgres:password@postgres:5432/codeintel}
+      - GRAPH_ENGINE=${GRAPH_ENGINE:-production}
+      - GRAPHQLITE_DB_PATH=${GRAPHQLITE_DB_PATH:-code_intel_graph.db}
       - REDIS_HOST=redis
       - USE_BITEMPORAL=true
       - PYTHONPATH=/app
