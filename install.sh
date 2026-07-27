@@ -664,7 +664,7 @@ case "$NEXT_STEP" in
         read -p "Enter Version Name (default: custom-v1): " REPO_VERSION
         REPO_VERSION=${REPO_VERSION:-custom-v1}
         echo -e "\n📥 ${CYAN}Starting analysis...${NC}"
-        $COMPOSE_CMD exec -i api code-intel analyze "$REPO_URL" --version "$REPO_VERSION" --branch "$REPO_BRANCH"
+        $COMPOSE_CMD exec api code-intel analyze "$REPO_URL" --version "$REPO_VERSION" --branch "$REPO_BRANCH"
         log_success "Analysis complete! You can now query this repository."
         ;;
     *) log_info "Happy Hacking! Access the UI at http://localhost:5173" ;;
