@@ -41,9 +41,9 @@ def verify():
             all_passed = False
 
     print("\n--- Import Verification ---")
-    # Add code_intel to path just in case we are running outside uv/venv
-    if src_dir not in sys.path:
-        sys.path.insert(0, src_dir)
+    # Add base_dir to path just in case we are running outside uv/venv
+    if base_dir not in sys.path:
+        sys.path.insert(0, base_dir)
 
     modules_to_test = [
         "code_intel",
