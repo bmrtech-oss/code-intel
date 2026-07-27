@@ -64,9 +64,18 @@ check_port() {
             return 1
         fi
     elif command -v netstat >/dev/null 2>&1; then
-        if netstat -tuln | grep -q ":$port " ; then
-            log_error "Port $port ($name) is already in use."
-            return 1
+        # Check if netstat supports -tuln (Linux netstat)
+        if netstat -tuln >/dev/null 2>&1; then
+            if netstat -tuln | grep -q ":$port " ; then
+                log_error "Port $port ($name) is already in use."
+                return 1
+            fi
+        # Fallback for Windows netstat (Git Bash / MSYS)
+        elif netstat -ano >/dev/null 2>&1; then
+            if netstat -ano | grep -q "LISTENING" | grep -q ":$port " ; then
+                log_error "Port $port ($name) is already in use."
+                return 1
+            fi
         fi
     fi
     return 0
@@ -116,11 +125,11 @@ find code_intel -type d -not -path '*/.*' -not -path '*/__pycache__*' | while re
   touch "$d/__init__.py"
 done
 
-# Validate package and imports using verify_pkg.py
-if command -v python3 >/dev/null 2>&1; then
-    python3 scripts/verify_pkg.py || log_warn "Package verification returned non-zero, continuing..."
-elif command -v python >/dev/null 2>&1; then
+# Validate package and imports using verify_pkg.py (prioritize python over python3 to avoid Windows Store python3 dummy alias bugs)
+if command -v python >/dev/null 2>&1; then
     python scripts/verify_pkg.py || log_warn "Package verification returned non-zero, continuing..."
+elif command -v python3 >/dev/null 2>&1; then
+    python3 scripts/verify_pkg.py || log_warn "Package verification returned non-zero, continuing..."
 fi
 
 # 2. Mandatory LLM Configuration Prompt
@@ -128,13 +137,26 @@ CURRENT_PROVIDER=$(grep "^LLM_PROVIDER=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2
 CURRENT_GOOGLE_KEY=$(grep "^GOOGLE_API_KEY=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2 | tr -d '"' || echo "")
 CURRENT_OR_KEY=$(grep "^LLM_API_KEY=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2 | tr -d '"' || echo "")
 
+OVERRIDE_ENV=true
+if [ -f "$ENV_FILE" ] && [ -t 0 ] && [ -z "${CI:-}" ]; then
+    echo -e "${YELLOW}⚠️  Existing $ENV_FILE file found.${NC}"
+    read -p "Would you like to run the configuration wizard to override it? (y/n) [default: n]: " -n 1 -r OVERRIDE_CHOICE
+    echo ""
+    if [[ ! "$OVERRIDE_CHOICE" =~ ^[Yy]$ ]]; then
+        OVERRIDE_ENV=false
+        log_info "Keeping existing configuration from $ENV_FILE."
+    fi
+fi
+
 SHOULD_PROMPT=false
-if [ -z "$CURRENT_PROVIDER" ] || [ "$CURRENT_PROVIDER" == "ollama" ]; then
-    SHOULD_PROMPT=true
-elif [ "$CURRENT_PROVIDER" == "google" ] && [ -z "$CURRENT_GOOGLE_KEY" ]; then
-    SHOULD_PROMPT=true
-elif [ "$CURRENT_PROVIDER" == "openrouter" ] && [ -z "$CURRENT_OR_KEY" ]; then
-    SHOULD_PROMPT=true
+if [ "$OVERRIDE_ENV" = true ]; then
+    if [ -z "$CURRENT_PROVIDER" ] || [ "$CURRENT_PROVIDER" == "ollama" ]; then
+        SHOULD_PROMPT=true
+    elif [ "$CURRENT_PROVIDER" == "google" ] && [ -z "$CURRENT_GOOGLE_KEY" ]; then
+        SHOULD_PROMPT=true
+    elif [ "$CURRENT_PROVIDER" == "openrouter" ] && [ -z "$CURRENT_OR_KEY" ]; then
+        SHOULD_PROMPT=true
+    fi
 fi
 
 if [ "$SHOULD_PROMPT" = true ]; then
@@ -155,7 +177,12 @@ if [ "$SHOULD_PROMPT" = true ]; then
 
     case "$LLM_CHOICE" in
         2)
-            read -p "Enter OpenRouter API Key (sk-or-...): " INPUT_KEY
+            if [ -t 0 ]; then
+                read -s -p "Enter OpenRouter API Key (sk-or-...): " INPUT_KEY
+                echo ""
+            else
+                read -r INPUT_KEY
+            fi
             if [ -n "$INPUT_KEY" ]; then
                 DEFAULT_MODEL="google/gemini-flash-1.5"
                 read -p "Enter Model Name (default: $DEFAULT_MODEL): " INPUT_MODEL
@@ -172,7 +199,12 @@ if [ "$SHOULD_PROMPT" = true ]; then
             update_env_var "LLM_MODEL" "phi3:mini"
             ;;
         *) # Default: Google Gemini
-            read -p "Enter Google Gemini API Key: " INPUT_KEY
+            if [ -t 0 ]; then
+                read -s -p "Enter Google Gemini API Key: " INPUT_KEY
+                echo ""
+            else
+                read -r INPUT_KEY
+            fi
             if [ -n "$INPUT_KEY" ]; then
                 DEFAULT_MODEL="gemini-1.5-flash"
                 read -p "Enter Model Name (default: $DEFAULT_MODEL): " INPUT_MODEL
@@ -231,9 +263,9 @@ if [ -z "$GRAPH_CHOICE" ] && [ -n "$CURRENT_GRAPH_ENGINE" ]; then
     fi
 fi
 
-# Prompt if not determined and we are prompting
+# Prompt if not determined, running interactively, and override is allowed
 if [ -z "$DB_CHOICE" ]; then
-    if [ "$SHOULD_PROMPT" = true ] && [ -t 0 ]; then
+    if [ -t 0 ] && [ -z "${CI:-}" ] && [ "$OVERRIDE_ENV" = true ]; then
         echo ""
         echo -e "${CYAN}💾 Database Backend Configuration${NC}"
         echo "----------------------------"
@@ -262,7 +294,7 @@ case "$DB_CHOICE" in
 esac
 
 if [ -z "$GRAPH_CHOICE" ]; then
-    if [ "$SHOULD_PROMPT" = true ] && [ -t 0 ]; then
+    if [ -t 0 ] && [ -z "${CI:-}" ] && [ "$OVERRIDE_ENV" = true ]; then
         echo ""
         echo -e "${CYAN}🔌 Graph Engine Configuration${NC}"
         echo "----------------------------"
@@ -374,14 +406,38 @@ else
 fi
 echo "✅ Using $COMPOSE_CMD"
 
-# Verify engine
-if ! timeout 15s $COMPOSE_CMD ps >/dev/null 2>&1; then
+# Verify engine with safe timeout check (handles Windows/Git Bash compat)
+engine_responsive=false
+if command -v timeout >/dev/null 2>&1 && timeout --version >/dev/null 2>&1; then
+    if timeout 15s $COMPOSE_CMD ps >/dev/null 2>&1; then
+        engine_responsive=true
+    fi
+else
+    # Fallback to direct invocation if GNU timeout is not available
+    if $COMPOSE_CMD ps >/dev/null 2>&1; then
+        engine_responsive=true
+    fi
+fi
+
+if [ "$engine_responsive" = false ]; then
     log_warn "Container engine is not responding. Attempting restart..."
     if command -v systemctl >/dev/null 2>&1; then
         sudo systemctl restart podman.socket podman.service 2>/dev/null || true
     fi
     sleep 5
-    if ! timeout 15s $COMPOSE_CMD ps >/dev/null 2>&1; then
+
+    engine_responsive_second=false
+    if command -v timeout >/dev/null 2>&1 && timeout --version >/dev/null 2>&1; then
+        if timeout 15s $COMPOSE_CMD ps >/dev/null 2>&1; then
+            engine_responsive_second=true
+        fi
+    else
+        if $COMPOSE_CMD ps >/dev/null 2>&1; then
+            engine_responsive_second=true
+        fi
+    fi
+
+    if [ "$engine_responsive_second" = false ]; then
         echo "❌ Error: Container engine is still not responding. Run: podman system reset"
         exit 1
     fi
@@ -412,29 +468,45 @@ else
         COMPOSE_PROFILES="--profile ollama"
     fi
 
-    if ! $COMPOSE_CMD $COMPOSE_PROFILES --env-file "$ENV_FILE" up -d --build postgres redis; then
+    if ! $COMPOSE_CMD $COMPOSE_PROFILES --env-file "$ENV_FILE" up -d postgres redis; then
         log_error "Failed to start Postgres/Redis. Check disk space or logs."; exit 1
     fi
 
-    log_info "Waiting for Postgres to become ready..."
-    COUNT=0
-    while [ $COUNT -lt 60 ]; do
-        if $COMPOSE_CMD exec -i postgres pg_isready -U postgres >/dev/null 2>&1; then
-            break
-        fi
-        sleep 5; COUNT=$((COUNT + 1))
-    done
+    if [ "$DB_CHOICE" = "1" ]; then
+        log_info "Waiting for Postgres to become ready..."
+        COUNT=0
+        while [ $COUNT -lt 60 ]; do
+            if $COMPOSE_CMD exec -T postgres pg_isready -U postgres >/dev/null 2>&1; then
+                break
+            fi
+            # Fallback local TCP socket port check to prevent hangs on Windows/Git Bash
+            if command -v python3 >/dev/null 2>&1 && python3 -c "import socket; s = socket.socket(); s.settimeout(1); s.connect(('127.0.0.1', 5432))" >/dev/null 2>&1; then
+                break
+            elif command -v python >/dev/null 2>&1 && python -c "import socket; s = socket.socket(); s.settimeout(1); s.connect(('127.0.0.1', 5432))" >/dev/null 2>&1; then
+                break
+            fi
+            sleep 5; COUNT=$((COUNT + 1))
+        done
 
-    if [ $COUNT -eq 60 ]; then
-        log_error "Postgres did not become ready in time."
-        $COMPOSE_CMD logs postgres | tail -n 20
-        exit 1
+        if [ $COUNT -eq 60 ]; then
+            log_error "Postgres did not become ready in time."
+            $COMPOSE_CMD logs postgres | tail -n 20
+            exit 1
+        fi
+    else
+        log_info "SQLite database backend selected; skipping Postgres readiness wait loop."
     fi
 
     log_info "Waiting for Redis to become ready..."
     COUNT=0
     while [ $COUNT -lt 60 ]; do
-        if $COMPOSE_CMD exec -i redis redis-cli ping >/dev/null 2>&1; then
+        if $COMPOSE_CMD exec -T redis redis-cli ping >/dev/null 2>&1; then
+            break
+        fi
+        # Fallback local TCP socket port check to prevent hangs on Windows/Git Bash
+        if command -v python3 >/dev/null 2>&1 && python3 -c "import socket; s = socket.socket(); s.settimeout(1); s.connect(('127.0.0.1', 6379))" >/dev/null 2>&1; then
+            break
+        elif command -v python >/dev/null 2>&1 && python -c "import socket; s = socket.socket(); s.settimeout(1); s.connect(('127.0.0.1', 6379))" >/dev/null 2>&1; then
             break
         fi
         sleep 5; COUNT=$((COUNT + 1))
@@ -451,7 +523,8 @@ else
     fi
 
     for container in codeintel-api codeintel-worker; do
-        if podman ps -a --format '{{.Names}} {{.Status}}' 2>/dev/null | grep -Fxq "$container created"; then
+        # Use case-insensitive search and strip \r to handle MSYS carriage returns and capitalization differences
+        if podman ps -a --format '{{.Names}} {{.Status}}' 2>/dev/null | tr -d '\r' | grep -Fiq "$container Created"; then
             log_info "Starting $container from Created state..."
             podman start "$container" >/dev/null 2>&1 || true
         fi
