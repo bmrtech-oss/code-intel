@@ -299,7 +299,12 @@ class DataflowEngine:
         self.storage = storage
         from ..settings import GRAPH_ENGINE
         if GRAPH_ENGINE == "local":
-            self.engine = LocalGraphEngine(storage)
+            try:
+                self.engine = LocalGraphEngine(storage)
+            except Exception as e:
+                import sys
+                print(f"WARNING: Failed to initialize LocalGraphEngine ({e}). Falling back to ProductionGraphEngine (standard SQL CTEs).", file=sys.stderr)
+                self.engine = ProductionGraphEngine(storage)
         else:
             self.engine = ProductionGraphEngine(storage)
 
