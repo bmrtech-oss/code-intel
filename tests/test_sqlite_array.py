@@ -1,4 +1,3 @@
-import sys
 import os
 import pytest
 import importlib
@@ -24,7 +23,7 @@ async def test_sqlite_array_serialization(tmp_path):
         importlib.reload(code_intel.core.models)
 
         # Verify that ARRAY is our custom SQLiteArray under sqlite environment
-        from code_intel.core.models import ARRAY, Base, DerivedFact
+        from code_intel.core.models import Base, DerivedFact
 
         # Create an async engine and tables
         engine = create_async_engine(db_url)

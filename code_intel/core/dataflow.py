@@ -1,7 +1,7 @@
 import abc
 import json
 import asyncio
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 from .storage import VersionedStorage
 
 try:

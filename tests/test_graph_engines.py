@@ -44,7 +44,7 @@ def test_engine_factory_selection():
         importlib.reload(code_intel.settings)
         # Mock graphqlite to avoid runtime extension error if not supported on host python
         with patch("code_intel.core.dataflow.GRAPHQLITE_AVAILABLE", True):
-            with patch("graphqlite.Graph") as mock_graph:
+            with patch("graphqlite.Graph"):
                 engine = DataflowEngine(storage)
                 assert isinstance(engine.engine, LocalGraphEngine)
 
