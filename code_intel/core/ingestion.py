@@ -21,16 +21,22 @@ class IngestionPipeline:
         total_files = len(all_files)
         parsed_count = 0
 
+        # Initialize asynchronous Redis client once to eliminate connection bottleneck
+        r = None
+        if job_id:
+            try:
+                import json
+                from redis.asyncio import Redis as AsyncRedis
+                redis_host = os.getenv("REDIS_HOST", "redis")
+                redis_port = int(os.getenv("REDIS_PORT", 6379))
+                r = AsyncRedis(host=redis_host, port=redis_port)
+            except Exception as e:
+                print(f"Error initializing AsyncRedis: {e}")
+
         for full_path in all_files:
             parsed_count += 1
-            if job_id:
+            if job_id and r:
                 try:
-                    import json
-                    from redis import Redis
-                    redis_host = os.getenv("REDIS_HOST", "redis")
-                    redis_port = int(os.getenv("REDIS_PORT", 6379))
-                    r = Redis(host=redis_host, port=redis_port)
-
                     progress_percent = int((parsed_count / total_files) * 100) if total_files > 0 else 100
                     progress_data = {
                         "file": os.path.basename(full_path),
@@ -39,20 +45,14 @@ class IngestionPipeline:
                         "parsed_count": parsed_count,
                         "total_files": total_files
                     }
-                    r.set(f"progress:{job_id}", json.dumps(progress_data))
+                    await r.set(f"progress:{job_id}", json.dumps(progress_data))
                 except Exception as e:
                     print(f"Error updating progress in Redis: {e}")
 
             await self.parse_file(full_path, version)
 
-        if job_id:
+        if job_id and r:
             try:
-                import json
-                from redis import Redis
-                redis_host = os.getenv("REDIS_HOST", "redis")
-                redis_port = int(os.getenv("REDIS_PORT", 6379))
-                r = Redis(host=redis_host, port=redis_port)
-
                 progress_data = {
                     "file": "",
                     "progress": 100,
@@ -60,7 +60,8 @@ class IngestionPipeline:
                     "parsed_count": parsed_count,
                     "total_files": total_files
                 }
-                r.set(f"progress:{job_id}", json.dumps(progress_data))
+                await r.set(f"progress:{job_id}", json.dumps(progress_data))
+                await r.aclose()  # Close the connection pool gracefully
             except Exception as e:
                 print(f"Error updating final progress in Redis: {e}")
 
