@@ -64,9 +64,18 @@ check_port() {
             return 1
         fi
     elif command -v netstat >/dev/null 2>&1; then
-        if netstat -tuln | grep -q ":$port " ; then
-            log_error "Port $port ($name) is already in use."
-            return 1
+        # Check if netstat supports -tuln (Linux netstat)
+        if netstat -tuln >/dev/null 2>&1; then
+            if netstat -tuln | grep -q ":$port " ; then
+                log_error "Port $port ($name) is already in use."
+                return 1
+            fi
+        # Fallback for Windows netstat (Git Bash / MSYS)
+        elif netstat -ano >/dev/null 2>&1; then
+            if netstat -ano | grep -q "LISTENING" | grep -q ":$port " ; then
+                log_error "Port $port ($name) is already in use."
+                return 1
+            fi
         fi
     fi
     return 0
@@ -444,7 +453,13 @@ else
         log_info "Waiting for Postgres to become ready..."
         COUNT=0
         while [ $COUNT -lt 60 ]; do
-            if $COMPOSE_CMD exec -i postgres pg_isready -U postgres >/dev/null 2>&1; then
+            if $COMPOSE_CMD exec -T postgres pg_isready -U postgres >/dev/null 2>&1; then
+                break
+            fi
+            # Fallback local TCP socket port check to prevent hangs on Windows/Git Bash
+            if command -v python3 >/dev/null 2>&1 && python3 -c "import socket; s = socket.socket(); s.settimeout(1); s.connect(('127.0.0.1', 5432))" >/dev/null 2>&1; then
+                break
+            elif command -v python >/dev/null 2>&1 && python -c "import socket; s = socket.socket(); s.settimeout(1); s.connect(('127.0.0.1', 5432))" >/dev/null 2>&1; then
                 break
             fi
             sleep 5; COUNT=$((COUNT + 1))
@@ -462,7 +477,13 @@ else
     log_info "Waiting for Redis to become ready..."
     COUNT=0
     while [ $COUNT -lt 60 ]; do
-        if $COMPOSE_CMD exec -i redis redis-cli ping >/dev/null 2>&1; then
+        if $COMPOSE_CMD exec -T redis redis-cli ping >/dev/null 2>&1; then
+            break
+        fi
+        # Fallback local TCP socket port check to prevent hangs on Windows/Git Bash
+        if command -v python3 >/dev/null 2>&1 && python3 -c "import socket; s = socket.socket(); s.settimeout(1); s.connect(('127.0.0.1', 6379))" >/dev/null 2>&1; then
+            break
+        elif command -v python >/dev/null 2>&1 && python -c "import socket; s = socket.socket(); s.settimeout(1); s.connect(('127.0.0.1', 6379))" >/dev/null 2>&1; then
             break
         fi
         sleep 5; COUNT=$((COUNT + 1))
