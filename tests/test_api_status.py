@@ -53,6 +53,13 @@ def test_api_status_cors():
     )
     assert response.headers.get("access-control-allow-origin") == "http://tauri.localhost"
 
+    # Test http://localhost origin
+    response = client.get(
+        "/status",
+        headers={"Origin": "http://localhost", "Access-Control-Request-Method": "GET"}
+    )
+    assert response.headers.get("access-control-allow-origin") == "http://localhost"
+
 def test_analyze_stream_redis_data():
     client = TestClient(app)
 
