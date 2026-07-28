@@ -19,6 +19,15 @@ async def _run_ingestion(repo_path: str, version: str, job_id: str = None):
             pipeline = IngestionPipeline(storage)
             await pipeline.walk_and_parse(repo_path, version, job_id=job_id)
             await session.commit()
+
+            # Automatically sync/rebuild the graph and read models
+            try:
+                from ..core.dataflow import DataflowEngine
+                dataflow = DataflowEngine(storage)
+                await dataflow.rebuild_graph(version)
+                await session.commit()
+            except Exception as e:
+                print(f"Error automatically rebuilding graph after ingestion: {e}")
     finally:
         if job_id:
             try:
