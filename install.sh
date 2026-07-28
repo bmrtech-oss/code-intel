@@ -117,6 +117,12 @@ echo -e "${CYAN}🚀 Starting Code-Intel One-Click Installation...${NC}"
 
 # 0. Initialize .env
 [ ! -f "$ENV_FILE" ] && [ "$ENV_FILE" == ".env" ] && cp .env.example .env
+mkdir -p data
+touch data/codeintel.db data/code_intel_graph.db 2>/dev/null || true
+if [ -d "data" ]; then
+    sudo chown -R $(id -u):$(id -g) data 2>/dev/null || true
+    chmod -R 777 data 2>/dev/null || true
+fi
 
 # 1. Package Structure Fix
 log_info "Verifying package structure..."
@@ -149,14 +155,20 @@ if [ -f "$ENV_FILE" ] && [ -t 0 ] && [ -z "${CI:-}" ]; then
 fi
 
 SHOULD_PROMPT=false
-if [ "$OVERRIDE_ENV" = true ]; then
-    if [ -z "$CURRENT_PROVIDER" ] || [ "$CURRENT_PROVIDER" == "ollama" ]; then
+if [ -f "$ENV_FILE" ]; then
+    if [ "$OVERRIDE_ENV" = true ]; then
         SHOULD_PROMPT=true
-    elif [ "$CURRENT_PROVIDER" == "google" ] && [ -z "$CURRENT_GOOGLE_KEY" ]; then
-        SHOULD_PROMPT=true
-    elif [ "$CURRENT_PROVIDER" == "openrouter" ] && [ -z "$CURRENT_OR_KEY" ]; then
-        SHOULD_PROMPT=true
+    else
+        if [ -z "$CURRENT_PROVIDER" ] || [ "$CURRENT_PROVIDER" == "ollama" ]; then
+            SHOULD_PROMPT=true
+        elif [ "$CURRENT_PROVIDER" == "google" ] && [ -z "$CURRENT_GOOGLE_KEY" ]; then
+            SHOULD_PROMPT=true
+        elif [ "$CURRENT_PROVIDER" == "openrouter" ] && [ -z "$CURRENT_OR_KEY" ]; then
+            SHOULD_PROMPT=true
+        fi
     fi
+else
+    SHOULD_PROMPT=true
 fi
 
 if [ "$SHOULD_PROMPT" = true ]; then
@@ -246,20 +258,22 @@ if [ -n "$GRAPH_ENGINE_VAL" ]; then
     esac
 fi
 
-# Fallback to current config if not supplied via command line
-if [ -z "$DB_CHOICE" ] && [ -n "$CURRENT_DB_URL" ]; then
-    if [[ "$CURRENT_DB_URL" == *"sqlite"* ]]; then
-        DB_CHOICE="2"
-    elif [[ "$CURRENT_DB_URL" == *"postgres"* ]]; then
-        DB_CHOICE="1"
+# Fallback to current config if not supplied via command line and override is not requested
+if [ "$OVERRIDE_ENV" = false ]; then
+    if [ -z "$DB_CHOICE" ] && [ -n "$CURRENT_DB_URL" ]; then
+        if [[ "$CURRENT_DB_URL" == *"sqlite"* ]]; then
+            DB_CHOICE="2"
+        elif [[ "$CURRENT_DB_URL" == *"postgres"* ]]; then
+            DB_CHOICE="1"
+        fi
     fi
-fi
 
-if [ -z "$GRAPH_CHOICE" ] && [ -n "$CURRENT_GRAPH_ENGINE" ]; then
-    if [[ "$CURRENT_GRAPH_ENGINE" == "local" ]]; then
-        GRAPH_CHOICE="2"
-    elif [[ "$CURRENT_GRAPH_ENGINE" == "production" ]]; then
-        GRAPH_CHOICE="1"
+    if [ -z "$GRAPH_CHOICE" ] && [ -n "$CURRENT_GRAPH_ENGINE" ]; then
+        if [[ "$CURRENT_GRAPH_ENGINE" == "local" ]]; then
+            GRAPH_CHOICE="2"
+        elif [[ "$CURRENT_GRAPH_ENGINE" == "production" ]]; then
+            GRAPH_CHOICE="1"
+        fi
     fi
 fi
 
@@ -395,53 +409,66 @@ if ! command -v uv >/dev/null 2>&1; then
     exit 1
 fi
 
-if command -v podman-compose >/dev/null 2>&1; then
-    COMPOSE_CMD="podman-compose"
-elif command -v docker-compose >/dev/null 2>&1; then
-    COMPOSE_CMD="docker-compose"
-elif docker compose version >/dev/null 2>&1; then
-    COMPOSE_CMD="docker compose"
-else
-    log_error "docker-compose or podman-compose is required."; exit 1
-fi
-echo "✅ Using $COMPOSE_CMD"
-
-# Verify engine with safe timeout check (handles Windows/Git Bash compat)
-engine_responsive=false
-if command -v timeout >/dev/null 2>&1 && timeout --version >/dev/null 2>&1; then
-    if timeout 15s $COMPOSE_CMD ps >/dev/null 2>&1; then
-        engine_responsive=true
+check_engine_responsive() {
+    local cmd=$1
+    if ! command -v ${cmd%% *} >/dev/null 2>&1; then
+        return 1
     fi
-else
-    # Fallback to direct invocation if GNU timeout is not available
-    if $COMPOSE_CMD ps >/dev/null 2>&1; then
-        engine_responsive=true
-    fi
-fi
 
-if [ "$engine_responsive" = false ]; then
-    log_warn "Container engine is not responding. Attempting restart..."
+    # Test responsiveness of the underlying daemon (podman or docker)
+    local status_cmd="docker info"
+    if [[ "$cmd" == *"podman"* ]]; then
+        status_cmd="podman info"
+    fi
+
+    local responsive=false
+    if command -v timeout >/dev/null 2>&1 && timeout --version >/dev/null 2>&1; then
+        if timeout 10s $status_cmd >/dev/null 2>&1; then
+            responsive=true
+        fi
+    else
+        if $status_cmd >/dev/null 2>&1; then
+            responsive=true
+        fi
+    fi
+
+    if [ "$responsive" = true ]; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+COMPOSE_CMD=""
+for candidate in "podman-compose" "docker-compose" "docker compose"; do
+    if check_engine_responsive "$candidate"; then
+        COMPOSE_CMD="$candidate"
+        break
+    fi
+done
+
+if [ -z "$COMPOSE_CMD" ]; then
+    log_warn "No responsive container engine found. Attempting to restart services..."
     if command -v systemctl >/dev/null 2>&1; then
         sudo systemctl restart podman.socket podman.service 2>/dev/null || true
+        sudo systemctl restart docker.socket docker.service 2>/dev/null || true
     fi
     sleep 5
 
-    engine_responsive_second=false
-    if command -v timeout >/dev/null 2>&1 && timeout --version >/dev/null 2>&1; then
-        if timeout 15s $COMPOSE_CMD ps >/dev/null 2>&1; then
-            engine_responsive_second=true
+    for candidate in "podman-compose" "docker-compose" "docker compose"; do
+        if check_engine_responsive "$candidate"; then
+            COMPOSE_CMD="$candidate"
+            break
         fi
-    else
-        if $COMPOSE_CMD ps >/dev/null 2>&1; then
-            engine_responsive_second=true
-        fi
-    fi
-
-    if [ "$engine_responsive_second" = false ]; then
-        echo "❌ Error: Container engine is still not responding. Run: podman system reset"
-        exit 1
-    fi
+    done
 fi
+
+if [ -z "$COMPOSE_CMD" ]; then
+    log_error "docker-compose or podman-compose is required and must be responsive."
+    exit 1
+fi
+
+echo "✅ Using $COMPOSE_CMD"
 
 # 6. Setup Python environment
 if [ "$SKIP_VENV" = false ]; then
@@ -468,8 +495,29 @@ else
         COMPOSE_PROFILES="--profile ollama"
     fi
 
-    if ! $COMPOSE_CMD $COMPOSE_PROFILES --env-file "$ENV_FILE" up -d postgres redis; then
-        log_error "Failed to start Postgres/Redis. Check disk space or logs."; exit 1
+    if [ "$DB_CHOICE" = "1" ]; then
+        log_info "Attempting to start Postgres & Redis..."
+        if ! $COMPOSE_CMD $COMPOSE_PROFILES --env-file "$ENV_FILE" up -d postgres redis; then
+            log_warn "Failed to start Postgres. This can happen in unprivileged container environments (e.g., overlayfs operation not permitted)."
+            log_info "Falling back to SQLite database backend..."
+            DB_CHOICE="2"
+            update_env_var "DATABASE_URL" "sqlite+aiosqlite:///data/codeintel.db"
+            update_env_var "DATABASE_URL_CONTAINER" "sqlite+aiosqlite:///data/codeintel.db"
+            # Also update Graph Engine to local if it was not explicitly configured
+            if [ -z "$GRAPH_CHOICE" ] || [ "$GRAPH_CHOICE" = "1" ]; then
+                log_info "Switching graph engine to local fallback..."
+                GRAPH_CHOICE="2"
+                update_env_var "GRAPH_ENGINE" "local"
+                update_env_var "GRAPHQLITE_DB_PATH" "data/code_intel_graph.db"
+            fi
+        fi
+    fi
+
+    if [ "$DB_CHOICE" = "2" ]; then
+        log_info "Starting Redis (for SQLite backend)..."
+        if ! $COMPOSE_CMD $COMPOSE_PROFILES --env-file "$ENV_FILE" up -d redis; then
+            log_error "Failed to start Redis. Check disk space or logs."; exit 1
+        fi
     fi
 
     if [ "$DB_CHOICE" = "1" ]; then
@@ -616,7 +664,7 @@ case "$NEXT_STEP" in
         read -p "Enter Version Name (default: custom-v1): " REPO_VERSION
         REPO_VERSION=${REPO_VERSION:-custom-v1}
         echo -e "\n📥 ${CYAN}Starting analysis...${NC}"
-        $COMPOSE_CMD exec -i api code-intel analyze "$REPO_URL" --version "$REPO_VERSION" --branch "$REPO_BRANCH"
+        $COMPOSE_CMD exec api code-intel analyze "$REPO_URL" --version "$REPO_VERSION" --branch "$REPO_BRANCH"
         log_success "Analysis complete! You can now query this repository."
         ;;
     *) log_info "Happy Hacking! Access the UI at http://localhost:5173" ;;

@@ -1,5 +1,5 @@
 # --- Builder Stage ---
-FROM python:3.11-slim AS builder
+FROM public.ecr.aws/docker/library/python:3.11-slim AS builder
 
 ARG TIER=minimal
 WORKDIR /app
@@ -26,7 +26,7 @@ RUN uv venv /app/.venv && \
     uv pip install --python /app/.venv/bin/python -e .
 
 # --- Final Stage ---
-FROM python:3.11-slim
+FROM public.ecr.aws/docker/library/python:3.11-slim
 
 WORKDIR /app
 COPY --from=builder /app/.venv /app/.venv
