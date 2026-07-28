@@ -96,4 +96,8 @@ node_modules/
 # Misc
 secrets.env
 
+# SQLite databases under data folder
+data/*.db
+data/**/*.db
+
 # Keep repository data/ and docs/ unless you want them ignored explicitly
