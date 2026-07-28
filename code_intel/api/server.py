@@ -56,6 +56,36 @@ def is_git_url(path: str) -> bool:
     """Check if the path is a Git repository URL."""
     return bool(re.match(r'^(https?://|git@)', path))
 
+def resolve_version(repo_path: str, branch: Optional[str] = None) -> str:
+    """Resolve the latest commit SHA for a remote Git URL or a local Git repo."""
+    if is_git_url(repo_path):
+        try:
+            import git
+            g = git.cmd.Git()
+            if branch:
+                output = g.ls_remote(repo_path, branch)
+                if output:
+                    return output.split()[0]
+            output = g.ls_remote(repo_path, "HEAD")
+            if output:
+                return output.split()[0]
+        except Exception as e:
+            print(f"Error resolving remote Git version: {e}")
+    else:
+        try:
+            import git
+            # Use os.path.realpath to handle symlinks and absolute paths
+            abs_path = os.path.abspath(repo_path)
+            real_path = os.path.realpath(abs_path)
+            if os.path.exists(real_path):
+                repo = git.Repo(real_path)
+                return repo.head.commit.hexsha
+        except Exception as e:
+            print(f"Error resolving local Git version: {e}")
+
+    from datetime import datetime
+    return str(int(datetime.utcnow().timestamp()))
+
 def is_safe_path(path: str) -> bool:
     """Check if the resolved path is within permitted directories."""
     try:
@@ -179,21 +209,23 @@ async def analyze(req: AnalyzeRequest, background_tasks: BackgroundTasks, db: As
     if not is_git_url(req.repo_path) and not is_safe_path(req.repo_path):
         raise HTTPException(status_code=400, detail="Invalid or unauthorized repository path")
 
-    version = req.version or str(int(datetime.utcnow().timestamp()))
-    actual_path = req.repo_path
-    temp_handler = None
-    if is_git_url(req.repo_path):
-        temp_handler = GitRepoHandler(req.repo_path, req.branch)
-        actual_path = temp_handler.clone()
-        background_tasks.add_task(temp_handler.cleanup)
+    # If version is not provided, resolve it dynamically to the latest commit SHA (or local Git SHA)
+    version = req.version or resolve_version(req.repo_path, req.branch)
     
     if USE_TEMPORAL:
         from ..worker.tasks import run_temporal_ingestion
+        actual_path = req.repo_path
+        temp_handler = None
+        if is_git_url(req.repo_path):
+            temp_handler = GitRepoHandler(req.repo_path, req.branch)
+            actual_path = temp_handler.clone()
+            background_tasks.add_task(temp_handler.cleanup)
         # Temporal is durable and handles its own queue
         background_tasks.add_task(run_temporal_ingestion, actual_path, version)
         return {"status": "temporal indexing started", "version": version, "job_id": f"ingest-{version}"}
     else:
-        job = queue.enqueue(run_ingestion, actual_path, version)
+        is_git = is_git_url(req.repo_path)
+        job = queue.enqueue(run_ingestion, req.repo_path, version, is_git_url=is_git, branch=req.branch)
         return {"status": "indexing started", "version": version, "job_id": job.id}
 
 @app.get("/status")
@@ -308,10 +340,11 @@ async def get_branches_and_commits(repo_path: str, workspace_id: Optional[str] =
             resolved_path = os.path.realpath(actual_path)
         else:
             if os.path.isabs(actual_path):
-                raise HTTPException(status_code=400, detail="Invalid or unauthorized repository path")
-            resolved_path = os.path.realpath(os.path.join(safe_root, actual_path))
+                resolved_path = os.path.realpath(actual_path)
+            else:
+                resolved_path = os.path.realpath(os.path.join(safe_root, actual_path))
 
-        if os.path.commonpath([safe_root, resolved_path]) != safe_root:
+        if not is_safe_path(resolved_path):
             raise HTTPException(status_code=400, detail="Invalid or unauthorized repository path")
 
         if os.path.exists(resolved_path):
@@ -354,7 +387,8 @@ async def get_branches_and_commits(repo_path: str, workspace_id: Optional[str] =
                 commits.append({
                     "sha": commit.hexsha,
                     "author": commit.author.name or "Unknown",
-                    "date": commit.committed_datetime.isoformat()
+                    "date": commit.committed_datetime.isoformat(),
+                    "message": commit.message.strip() if commit.message else ""
                 })
             git_success = True
     except Exception:
@@ -377,7 +411,8 @@ async def get_branches_and_commits(repo_path: str, workspace_id: Optional[str] =
                         commits.append({
                             "sha": c["sha"],
                             "author": c.get("author", "Unknown"),
-                            "date": c.get("date", datetime.utcnow().isoformat())
+                            "date": c.get("date", datetime.utcnow().isoformat()),
+                            "message": c.get("message", "")
                         })
                 if "main" not in branches:
                     branches.append("main")
@@ -386,14 +421,6 @@ async def get_branches_and_commits(repo_path: str, workspace_id: Optional[str] =
 
     if not branches:
         branches = ["main"]
-    if not commits:
-        commits = [
-            {
-                "sha": "a7b8c9",
-                "author": "Jules",
-                "date": "2026-07-16T12:00:00Z"
-            }
-        ]
 
     await ws_manager.close()
     return {

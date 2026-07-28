@@ -150,8 +150,7 @@ def test_get_branches_and_commits_fallback():
     assert "branches" in data
     assert "commits" in data
     assert len(data["branches"]) > 0
-    assert len(data["commits"]) > 0
-    assert data["commits"][0]["sha"] == "a7b8c9"
+    assert len(data["commits"]) == 0
 
 def test_get_branches_and_commits_simple_graph_fallback():
     client = TestClient(app)
@@ -172,7 +171,7 @@ def test_get_branches_and_commits_simple_graph_fallback():
         assert response.status_code == 200
         data = response.json()
         assert data["branches"] == ["main"]
-        assert data["commits"] == [{"sha": "c1", "author": "Alice", "date": "2026-07-16T12:00:00Z"}]
+        assert data["commits"] == [{"sha": "c1", "author": "Alice", "date": "2026-07-16T12:00:00Z", "message": ""}]
 
 def test_get_repo_tree():
     client = TestClient(app)
@@ -220,6 +219,52 @@ def test_get_repo_tree():
 
     finally:
         app.dependency_overrides.clear()
+
+def test_resolve_version_and_analyze():
+    client = TestClient(app)
+
+    # 1. Test resolve_version with mocked Git ls-remote
+    with patch("git.cmd.Git") as mock_git_class:
+        mock_git = MagicMock()
+        mock_git.ls_remote.return_value = "bc044fcc12eff6c92c4a248e78053eca7000bb5e\trefs/heads/main"
+        mock_git_class.return_value = mock_git
+
+        from code_intel.api.server import resolve_version
+        sha = resolve_version("https://github.com/KenMwaura1/Fast-Api-example", "main")
+        assert sha == "bc044fcc12eff6c92c4a248e78053eca7000bb5e"
+
+    # 2. Test POST /analyze with remote Git URL
+    with patch("code_intel.worker.tasks.queue.enqueue") as mock_enqueue, \
+         patch("git.cmd.Git") as mock_git_class:
+
+        mock_git = MagicMock()
+        mock_git.ls_remote.return_value = "bc044fcc12eff6c92c4a248e78053eca7000bb5e\trefs/heads/main"
+        mock_git_class.return_value = mock_git
+
+        mock_job = MagicMock()
+        mock_job.id = "test-job-id"
+        mock_enqueue.return_value = mock_job
+
+        payload = {
+            "repo_path": "https://github.com/KenMwaura1/Fast-Api-example",
+            "branch": "main"
+        }
+        response = client.post("/analyze", json=payload)
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "indexing started"
+        assert data["version"] == "bc044fcc12eff6c92c4a248e78053eca7000bb5e"
+        assert data["job_id"] == "test-job-id"
+
+        # Verify that queue.enqueue was called with is_git_url=True and branch="main"
+        from code_intel.worker.tasks import run_ingestion
+        mock_enqueue.assert_called_once_with(
+            run_ingestion,
+            "https://github.com/KenMwaura1/Fast-Api-example",
+            "bc044fcc12eff6c92c4a248e78053eca7000bb5e",
+            is_git_url=True,
+            branch="main"
+        )
 
 def test_path_traversal_protection():
     client = TestClient(app)
