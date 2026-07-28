@@ -72,6 +72,11 @@ def resolve_version(repo_path: str, branch: Optional[str] = None) -> str:
         except Exception as e:
             print(f"Error resolving remote Git version: {e}")
     else:
+        # Security Sanitizer: Prevent path injection/traversal
+        if not is_safe_path(repo_path):
+            from datetime import datetime
+            return str(int(datetime.utcnow().timestamp()))
+
         try:
             import git
             # Use os.path.realpath to handle symlinks and absolute paths
