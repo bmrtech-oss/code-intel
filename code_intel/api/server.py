@@ -88,13 +88,10 @@ def resolve_version(repo_path: str, branch: Optional[str] = None) -> str:
                 "/shared"
             ]
             for root in safe_roots:
-                try:
-                    common_prefix = os.path.commonpath([real_path, root])
-                    if common_prefix == root:
-                        is_valid = True
-                        break
-                except ValueError:
-                    continue
+                root_slash = root if root.endswith(os.path.sep) else root + os.path.sep
+                if real_path.startswith(root_slash) or real_path == root:
+                    is_valid = True
+                    break
 
             if not is_valid:
                 return str(int(datetime.utcnow().timestamp()))
@@ -124,12 +121,9 @@ def is_safe_path(path: str) -> bool:
         ]
 
         for root in safe_roots:
-            try:
-                common_prefix = os.path.commonpath([real_path, root])
-                if common_prefix == root:
-                    return True
-            except ValueError:
-                continue
+            root_slash = root if root.endswith(os.path.sep) else root + os.path.sep
+            if real_path.startswith(root_slash) or real_path == root:
+                return True
         return False
     except Exception:
         return False
