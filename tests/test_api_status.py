@@ -220,6 +220,82 @@ def test_get_repo_tree():
     finally:
         app.dependency_overrides.clear()
 
+def test_get_version_status():
+    client = TestClient(app)
+
+    mock_db = MagicMock()
+    mock_execute = AsyncMock()
+    mock_db.execute = mock_execute
+
+    # Mock DB queries:
+    # 1. First execute call inside version-status check: graph_nodes check -> returns None (not analyzed)
+    # 2. Second execute call inside version-status check: current_symbols check -> returns None (not analyzed)
+    # 3. Third execute call inside find_best_version: LIMIT 1 -> returns None
+    # 4. Fourth execute call inside find_best_version: SELECT DISTINCT version FROM graph_nodes -> returns [{"version": "fallback_sha"}]
+    # 5. Fifth execute call: SELECT DISTINCT version FROM graph_nodes (has any analysis check) -> returns [{"version": "fallback_sha"}]
+    mock_result_not_found = MagicMock()
+    mock_result_not_found.scalar.return_value = None
+
+    mock_result_distinct = MagicMock()
+    mock_result_distinct.mappings.return_value = [
+        {"version": "fallback_sha"}
+    ]
+
+    mock_execute.side_effect = [
+        mock_result_not_found,
+        mock_result_not_found,
+        mock_result_not_found,
+        mock_result_distinct,
+        mock_result_distinct
+    ]
+
+    async def override_get_db():
+        yield mock_db
+
+    app.dependency_overrides[get_db] = override_get_db
+
+    try:
+        response = client.get("/repo/version-status?version=missing_sha")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["requested_version"] == "missing_sha"
+        assert data["is_analyzed"] is False
+        assert data["best_fallback_version"] == "fallback_sha"
+        assert data["has_any_analysis"] is True
+
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_tree_graph_response_headers():
+    client = TestClient(app)
+
+    mock_db = MagicMock()
+    mock_execute = AsyncMock()
+    mock_db.execute = mock_execute
+
+    # Mock DB query for get_repo_tree: returns nodes on the first call (so no fallback is triggered)
+    mock_result_tree = MagicMock()
+    mock_result_tree.mappings.return_value = [
+        {"fqn": "FQN1", "file": "src/main.py"}
+    ]
+    mock_execute.return_value = mock_result_tree
+
+    async def override_get_db():
+        yield mock_db
+
+    app.dependency_overrides[get_db] = override_get_db
+
+    try:
+        response = client.get("/repo/tree?version=active_sha")
+        assert response.status_code == 200
+        assert response.headers.get("X-Version-Requested") == "active_sha"
+        assert response.headers.get("X-Version-Resolved") == "active_sha"
+        assert response.headers.get("X-Version-Fallback") == "false"
+
+    finally:
+        app.dependency_overrides.clear()
+
 def test_find_best_version_fallback():
     client = TestClient(app)
 

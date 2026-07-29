@@ -2,7 +2,7 @@ import os
 import re
 import json
 from ..utils.traceability import fuzzy_match_symbols
-from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks
+from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks, Response
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -503,8 +503,65 @@ async def get_branches_and_commits(repo_path: str, workspace_id: Optional[str] =
         "commits": commits
     }
 
+@app.get("/repo/version-status")
+async def get_repo_version_status(version: str, db: AsyncSession = Depends(get_db)):
+    """Check analysis status of a specific version and get fallback options."""
+    # 1. Check if the exact version is analyzed
+    is_analyzed = False
+    try:
+        check_result = await db.execute(
+            text("SELECT 1 FROM graph_nodes WHERE version = :v LIMIT 1"),
+            {"v": version}
+        )
+        if check_result.scalar():
+            is_analyzed = True
+    except Exception:
+        pass
+
+    if not is_analyzed:
+        try:
+            check_result = await db.execute(
+                text("SELECT 1 FROM current_symbols WHERE version = :v LIMIT 1"),
+                {"v": version}
+            )
+            if check_result.scalar():
+                is_analyzed = True
+        except Exception:
+            pass
+
+    # 2. Find the best fallback version
+    best_fallback = None
+    if not is_analyzed:
+        best_fallback = await find_best_version(version, db)
+        if best_fallback == version:
+            best_fallback = None
+
+    # 3. Check if any analysis exists at all
+    has_any_analysis = False
+    try:
+        versions_result = await db.execute(text("SELECT DISTINCT version FROM graph_nodes"))
+        if any(row.get("version") for row in versions_result.mappings()):
+            has_any_analysis = True
+    except Exception:
+        pass
+
+    if not has_any_analysis:
+        try:
+            versions_result = await db.execute(text("SELECT DISTINCT version FROM current_symbols"))
+            if any(row.get("version") for row in versions_result.mappings()):
+                has_any_analysis = True
+        except Exception:
+            pass
+
+    return {
+        "requested_version": version,
+        "is_analyzed": is_analyzed,
+        "best_fallback_version": best_fallback,
+        "has_any_analysis": has_any_analysis
+    }
+
 @app.get("/repo/tree")
-async def get_repo_tree(version: str, db: AsyncSession = Depends(get_db)):
+async def get_repo_tree(version: str, response: Response, db: AsyncSession = Depends(get_db)):
     # Try querying the graph_nodes read model first
     nodes = []
     try:
@@ -527,14 +584,18 @@ async def get_repo_tree(version: str, db: AsyncSession = Depends(get_db)):
         except Exception:
             pass
 
+    resolved_version = version
+    is_fallback = False
+
     # If empty, lazy fall back to the best available version
     if not nodes:
-        fallback_version = await find_best_version(version, db)
-        if fallback_version != version:
+        resolved_version = await find_best_version(version, db)
+        if resolved_version != version:
+            is_fallback = True
             try:
                 result = await db.execute(
                     text("SELECT fqn, file FROM graph_nodes WHERE version = :v"),
-                    {"v": fallback_version}
+                    {"v": resolved_version}
                 )
                 nodes = [dict(row) for row in result.mappings()]
             except Exception:
@@ -544,11 +605,15 @@ async def get_repo_tree(version: str, db: AsyncSession = Depends(get_db)):
                 try:
                     result = await db.execute(
                         text("SELECT name AS fqn, file FROM current_symbols WHERE version = :v"),
-                        {"v": fallback_version}
+                        {"v": resolved_version}
                     )
                     nodes = [dict(row) for row in result.mappings()]
                 except Exception:
                     pass
+
+    response.headers["X-Version-Requested"] = version
+    response.headers["X-Version-Resolved"] = resolved_version
+    response.headers["X-Version-Fallback"] = "true" if is_fallback else "false"
 
     # Aggregate active files and their symbols
     files_symbols = {}
@@ -584,7 +649,7 @@ async def get_repo_tree(version: str, db: AsyncSession = Depends(get_db)):
     return tree
 
 @app.get("/graph")
-async def get_graph(version: str, level: str = "file", focus_symbol: Optional[str] = None, db: AsyncSession = Depends(get_db)):
+async def get_graph(version: str, response: Response, level: str = "file", focus_symbol: Optional[str] = None, db: AsyncSession = Depends(get_db)):
     # Try querying graph_nodes/graph_edges
     db_nodes = []
     try:
@@ -607,14 +672,18 @@ async def get_graph(version: str, level: str = "file", focus_symbol: Optional[st
         except Exception:
             pass
 
+    resolved_version = version
+    is_fallback = False
+
     # If empty, lazy fall back to the best available version
     if not db_nodes:
-        fallback_version = await find_best_version(version, db)
-        if fallback_version != version:
+        resolved_version = await find_best_version(version, db)
+        if resolved_version != version:
+            is_fallback = True
             try:
                 result = await db.execute(
                     text("SELECT fqn, kind, file FROM graph_nodes WHERE version = :v"),
-                    {"v": fallback_version}
+                    {"v": resolved_version}
                 )
                 db_nodes = [dict(row) for row in result.mappings()]
             except Exception:
@@ -624,13 +693,18 @@ async def get_graph(version: str, level: str = "file", focus_symbol: Optional[st
                 try:
                     result = await db.execute(
                         text("SELECT name AS fqn, kind, file FROM current_symbols WHERE version = :v"),
-                        {"v": fallback_version}
+                        {"v": resolved_version}
                     )
                     db_nodes = [dict(row) for row in result.mappings()]
                 except Exception:
                     pass
-            # Update version to the fallback_version so the edges query also queries the fallback
-            version = fallback_version
+
+    # Set version to the resolved fallback version so subsequent edge queries also use it
+    version = resolved_version
+
+    response.headers["X-Version-Requested"] = version
+    response.headers["X-Version-Resolved"] = resolved_version
+    response.headers["X-Version-Fallback"] = "true" if is_fallback else "false"
 
     db_edges = []
     try:
