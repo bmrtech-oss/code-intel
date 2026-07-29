@@ -80,21 +80,25 @@ def resolve_version(repo_path: str, branch: Optional[str] = None) -> str:
             real_path = os.path.realpath(abs_path)
 
             # Security Sanitizer: Prevent path injection/traversal
-            safe_roots = [
-                os.path.realpath(os.getcwd()),
-                os.path.realpath(tempfile.gettempdir()),
-                os.path.realpath("/repo"),
-                os.path.realpath("/shared")
-            ]
+            # Explicit string-literal checking for CodeQL compliance
             is_valid = False
-            for root in safe_roots:
-                try:
-                    if os.path.commonpath([real_path, root]) == root:
-                        is_valid = True
-                        break
-                except ValueError:
-                    # Different drives / invalid mix of absolute-relative paths
-                    continue
+
+            # Check absolute literal prefixes
+            if real_path == "/repo" or real_path.startswith("/repo/"):
+                is_valid = True
+            elif real_path == "/shared" or real_path.startswith("/shared/"):
+                is_valid = True
+            else:
+                # Resolve active working directory and temp directory safely
+                cwd_dir = os.path.realpath(os.getcwd())
+                cwd_dir_slash = cwd_dir if cwd_dir.endswith(os.path.sep) else cwd_dir + os.path.sep
+                temp_dir = os.path.realpath(tempfile.gettempdir())
+                temp_dir_slash = temp_dir if temp_dir.endswith(os.path.sep) else temp_dir + os.path.sep
+
+                if real_path == cwd_dir or real_path.startswith(cwd_dir_slash):
+                    is_valid = True
+                elif real_path == temp_dir or real_path.startswith(temp_dir_slash):
+                    is_valid = True
 
             if not is_valid:
                 return str(int(datetime.utcnow().timestamp()))
@@ -115,18 +119,22 @@ def is_safe_path(path: str) -> bool:
         abs_path = os.path.abspath(path)
         real_path = os.path.realpath(abs_path)
 
-        # Safe root directories
-        safe_roots = [
-            os.path.realpath(os.getcwd()),
-            os.path.realpath(tempfile.gettempdir()),
-            "/repo",
-            "/shared"
-        ]
+        # Explicit string-literal checking for CodeQL compliance
+        if real_path == "/repo" or real_path.startswith("/repo/"):
+            return True
+        if real_path == "/shared" or real_path.startswith("/shared/"):
+            return True
 
-        for root in safe_roots:
-            root_slash = root if root.endswith(os.path.sep) else root + os.path.sep
-            if real_path.startswith(root_slash) or real_path == root:
-                return True
+        cwd_dir = os.path.realpath(os.getcwd())
+        cwd_dir_slash = cwd_dir if cwd_dir.endswith(os.path.sep) else cwd_dir + os.path.sep
+        temp_dir = os.path.realpath(tempfile.gettempdir())
+        temp_dir_slash = temp_dir if temp_dir.endswith(os.path.sep) else temp_dir + os.path.sep
+
+        if real_path == cwd_dir or real_path.startswith(cwd_dir_slash):
+            return True
+        if real_path == temp_dir or real_path.startswith(temp_dir_slash):
+            return True
+
         return False
     except Exception:
         return False
