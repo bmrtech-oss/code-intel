@@ -72,23 +72,39 @@ def resolve_version(repo_path: str, branch: Optional[str] = None) -> str:
         except Exception as e:
             print(f"Error resolving remote Git version: {e}")
     else:
-        # Security Sanitizer: Prevent path injection/traversal
-        if not is_safe_path(repo_path):
-            from datetime import datetime
-            return str(int(datetime.utcnow().timestamp()))
-
         try:
             import git
-            # Use os.path.realpath to handle symlinks and absolute paths
+            import tempfile
+
             abs_path = os.path.abspath(repo_path)
             real_path = os.path.realpath(abs_path)
+
+            # Security Sanitizer: Prevent path injection/traversal
+            is_valid = False
+            safe_roots = [
+                os.path.realpath(os.getcwd()),
+                os.path.realpath(tempfile.gettempdir()),
+                "/repo",
+                "/shared"
+            ]
+            for root in safe_roots:
+                try:
+                    common_prefix = os.path.commonpath([real_path, root])
+                    if common_prefix == root:
+                        is_valid = True
+                        break
+                except ValueError:
+                    continue
+
+            if not is_valid:
+                return str(int(datetime.utcnow().timestamp()))
+
             if os.path.exists(real_path):
                 repo = git.Repo(real_path)
                 return repo.head.commit.hexsha
         except Exception as e:
             print(f"Error resolving local Git version: {e}")
 
-    from datetime import datetime
     return str(int(datetime.utcnow().timestamp()))
 
 def is_safe_path(path: str) -> bool:
@@ -319,7 +335,6 @@ async def get_branches_and_commits(repo_path: str, workspace_id: Optional[str] =
         raise HTTPException(status_code=400, detail="Invalid or unauthorized repository path")
 
     import git
-    from datetime import datetime
     from ..core.git_handler import GitRepoHandler
     from ..core.workspace import WorkspaceManager
     from ..storage.graph_engine import SimpleGraphEngine
