@@ -220,6 +220,52 @@ def test_get_repo_tree():
     finally:
         app.dependency_overrides.clear()
 
+def test_find_best_version_fallback():
+    client = TestClient(app)
+
+    mock_db = MagicMock()
+    mock_execute = AsyncMock()
+    mock_db.execute = mock_execute
+
+    async def mock_execute_fn(query, params=None):
+        query_str = str(query)
+        if "LIMIT 1" in query_str:
+            mock_res = MagicMock()
+            mock_res.scalar.return_value = None
+            return mock_res
+        elif "DISTINCT version" in query_str:
+            mock_res = MagicMock()
+            mock_res.mappings.return_value = [{"version": "existing_sha_999"}]
+            return mock_res
+        else:
+            if params and params.get("v") == "existing_sha_999":
+                mock_res = MagicMock()
+                mock_res.mappings.return_value = [{"fqn": "FQN1", "file": "src/main.py"}]
+                return mock_res
+            else:
+                mock_res = MagicMock()
+                mock_res.mappings.return_value = []
+                return mock_res
+
+    mock_execute.side_effect = mock_execute_fn
+
+    async def override_get_db():
+        yield mock_db
+
+    app.dependency_overrides[get_db] = override_get_db
+
+    try:
+        response = client.get("/repo/tree?version=missing_sha_111")
+        assert response.status_code == 200
+        data = response.json()
+
+        # Verify it fallback and returns the tree content for "existing_sha_999"
+        assert "src" in data
+        assert data["src"]["children"]["main.py"]["symbols"] == ["FQN1"]
+
+    finally:
+        app.dependency_overrides.clear()
+
 def test_resolve_version_and_analyze():
     client = TestClient(app)
 

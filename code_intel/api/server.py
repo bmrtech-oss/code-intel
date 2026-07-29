@@ -134,6 +134,53 @@ def is_safe_path(path: str) -> bool:
     except Exception:
         return False
 
+async def find_best_version(version: str, db: AsyncSession) -> str:
+    """Find the requested version or the closest parsed/existing version in the database."""
+    # 1. Check if the exact version exists in graph_nodes
+    try:
+        check_result = await db.execute(
+            text("SELECT 1 FROM graph_nodes WHERE version = :v LIMIT 1"),
+            {"v": version}
+        )
+        if check_result.scalar():
+            return version
+    except Exception:
+        pass
+
+    # 2. Get all parsed versions in the database
+    existing_versions = set()
+    try:
+        versions_result = await db.execute(text("SELECT DISTINCT version FROM graph_nodes"))
+        for row in versions_result.mappings():
+            v = row.get("version")
+            if v:
+                existing_versions.add(v)
+    except Exception:
+        pass
+
+    if not existing_versions:
+        # Fallback to current_symbols distinct versions
+        try:
+            versions_result = await db.execute(text("SELECT DISTINCT version FROM current_symbols"))
+            for row in versions_result.mappings():
+                v = row.get("version")
+                if v:
+                    existing_versions.add(v)
+        except Exception:
+            pass
+
+    if not existing_versions:
+        return version
+
+    if version in existing_versions:
+        return version
+
+    # Fallback to the most recent parsed version in existing_versions (sorted alphabetically/chronologically)
+    for v in sorted(list(existing_versions), reverse=True):
+        return v
+
+    return version
+
 def extract_json(text: str):
     # With Ollama grammar, we expect valid JSON directly.
     try:
@@ -480,6 +527,29 @@ async def get_repo_tree(version: str, db: AsyncSession = Depends(get_db)):
         except Exception:
             pass
 
+    # If empty, lazy fall back to the best available version
+    if not nodes:
+        fallback_version = await find_best_version(version, db)
+        if fallback_version != version:
+            try:
+                result = await db.execute(
+                    text("SELECT fqn, file FROM graph_nodes WHERE version = :v"),
+                    {"v": fallback_version}
+                )
+                nodes = [dict(row) for row in result.mappings()]
+            except Exception:
+                pass
+
+            if not nodes:
+                try:
+                    result = await db.execute(
+                        text("SELECT name AS fqn, file FROM current_symbols WHERE version = :v"),
+                        {"v": fallback_version}
+                    )
+                    nodes = [dict(row) for row in result.mappings()]
+                except Exception:
+                    pass
+
     # Aggregate active files and their symbols
     files_symbols = {}
     for n in nodes:
@@ -536,6 +606,31 @@ async def get_graph(version: str, level: str = "file", focus_symbol: Optional[st
             db_nodes = [dict(row) for row in result.mappings()]
         except Exception:
             pass
+
+    # If empty, lazy fall back to the best available version
+    if not db_nodes:
+        fallback_version = await find_best_version(version, db)
+        if fallback_version != version:
+            try:
+                result = await db.execute(
+                    text("SELECT fqn, kind, file FROM graph_nodes WHERE version = :v"),
+                    {"v": fallback_version}
+                )
+                db_nodes = [dict(row) for row in result.mappings()]
+            except Exception:
+                pass
+
+            if not db_nodes:
+                try:
+                    result = await db.execute(
+                        text("SELECT name AS fqn, kind, file FROM current_symbols WHERE version = :v"),
+                        {"v": fallback_version}
+                    )
+                    db_nodes = [dict(row) for row in result.mappings()]
+                except Exception:
+                    pass
+            # Update version to the fallback_version so the edges query also queries the fallback
+            version = fallback_version
 
     db_edges = []
     try:
