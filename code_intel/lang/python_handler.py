@@ -3,14 +3,30 @@ from ..core.storage import VersionedStorage
 import os
 
 class PythonVisitor:
-    def __init__(self, storage: VersionedStorage, file_path: str, version: str):
+    def __init__(self, storage: VersionedStorage, file_path: str, version: str, root_path: str = None):
         self.storage = storage
         self.file_path = file_path
         self.version = version
         self.current_scope = []
         self.source_text = ""
-        # Basic module name from file path
-        module_name = os.path.splitext(file_path)[0].replace("\\", ".").replace("/", ".")
+
+        # Compute relative path from the repository root
+        if root_path:
+            rel_path = os.path.relpath(file_path, root_path)
+        else:
+            # Fallback relative to current working directory
+            rel_path = os.path.relpath(file_path, os.getcwd())
+
+        # Normalize separators and strip extension
+        module_name = os.path.splitext(rel_path)[0].replace("\\", ".").replace("/", ".")
+        module_name = module_name.lstrip(".")
+
+        # Strip common source prefixes to align with Python import paths (e.g. "src.")
+        if module_name.startswith("src."):
+            module_name = module_name[4:]
+        elif module_name.startswith("source."):
+            module_name = module_name[7:]
+
         if module_name.startswith("code_intel."):
             module_name = module_name[4:]
         self.module_name = module_name
