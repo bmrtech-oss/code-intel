@@ -263,7 +263,38 @@ def test_resolve_version_and_analyze():
             "https://github.com/KenMwaura1/Fast-Api-example",
             "bc044fcc12eff6c92c4a248e78053eca7000bb5e",
             is_git_url=True,
-            branch="main"
+            branch="main",
+            job_timeout=300
+        )
+
+    # 3. Test POST /analyze with custom timeout
+    with patch("code_intel.worker.tasks.queue.enqueue") as mock_enqueue, \
+         patch("git.cmd.Git") as mock_git_class:
+
+        mock_git = MagicMock()
+        mock_git.ls_remote.return_value = "bc044fcc12eff6c92c4a248e78053eca7000bb5e\trefs/heads/main"
+        mock_git_class.return_value = mock_git
+
+        mock_job = MagicMock()
+        mock_job.id = "test-job-id"
+        mock_enqueue.return_value = mock_job
+
+        payload = {
+            "repo_path": "https://github.com/KenMwaura1/Fast-Api-example",
+            "branch": "main",
+            "timeout": 600
+        }
+        response = client.post("/analyze", json=payload)
+        assert response.status_code == 200
+
+        from code_intel.worker.tasks import run_ingestion
+        mock_enqueue.assert_called_once_with(
+            run_ingestion,
+            "https://github.com/KenMwaura1/Fast-Api-example",
+            "bc044fcc12eff6c92c4a248e78053eca7000bb5e",
+            is_git_url=True,
+            branch="main",
+            job_timeout=600
         )
 
 def test_path_traversal_protection():

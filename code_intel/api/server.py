@@ -192,6 +192,7 @@ class AnalyzeRequest(BaseModel):
     repo_path: str
     version: Optional[str] = None
     branch: Optional[str] = None
+    timeout: Optional[int] = 300
 
 class QueryRequest(BaseModel):
     rule: str
@@ -230,7 +231,14 @@ async def analyze(req: AnalyzeRequest, background_tasks: BackgroundTasks, db: As
         return {"status": "temporal indexing started", "version": version, "job_id": f"ingest-{version}"}
     else:
         is_git = is_git_url(req.repo_path)
-        job = queue.enqueue(run_ingestion, req.repo_path, version, is_git_url=is_git, branch=req.branch)
+        job = queue.enqueue(
+            run_ingestion,
+            req.repo_path,
+            version,
+            is_git_url=is_git,
+            branch=req.branch,
+            job_timeout=req.timeout or 300
+        )
         return {"status": "indexing started", "version": version, "job_id": job.id}
 
 @app.get("/status")
