@@ -80,18 +80,21 @@ def resolve_version(repo_path: str, branch: Optional[str] = None) -> str:
             real_path = os.path.realpath(abs_path)
 
             # Security Sanitizer: Prevent path injection/traversal
-            is_valid = False
             safe_roots = [
                 os.path.realpath(os.getcwd()),
                 os.path.realpath(tempfile.gettempdir()),
-                "/repo",
-                "/shared"
+                os.path.realpath("/repo"),
+                os.path.realpath("/shared")
             ]
+            is_valid = False
             for root in safe_roots:
-                root_slash = root if root.endswith(os.path.sep) else root + os.path.sep
-                if real_path.startswith(root_slash) or real_path == root:
-                    is_valid = True
-                    break
+                try:
+                    if os.path.commonpath([real_path, root]) == root:
+                        is_valid = True
+                        break
+                except ValueError:
+                    # Different drives / invalid mix of absolute-relative paths
+                    continue
 
             if not is_valid:
                 return str(int(datetime.utcnow().timestamp()))
