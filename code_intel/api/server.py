@@ -381,7 +381,7 @@ async def analyze_stream(job_id: str):
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 @app.get("/repo/branches-and-commits")
-async def get_branches_and_commits(repo_path: str, workspace_id: Optional[str] = None):
+async def get_branches_and_commits(repo_path: str, branch: Optional[str] = None, workspace_id: Optional[str] = None):
     # Path Traversal Security check
     if not is_git_url(repo_path) and not is_safe_path(repo_path):
         raise HTTPException(status_code=400, detail="Invalid or unauthorized repository path")
@@ -452,16 +452,17 @@ async def get_branches_and_commits(repo_path: str, workspace_id: Optional[str] =
                     pass
 
             # Perform recursive lookup over parent commits
-            rev = "HEAD"
-            try:
-                rev = repo.active_branch.name
-            except Exception:
-                for b in ["main", "master", "dev"]:
-                    if b in branches:
-                        rev = b
-                        break
-                if rev == "HEAD" and branches:
-                    rev = branches[0]
+            rev = branch or "HEAD"
+            if rev == "HEAD":
+                try:
+                    rev = repo.active_branch.name
+                except Exception:
+                    for b in ["main", "master", "dev"]:
+                        if b in branches:
+                            rev = b
+                            break
+                    if rev == "HEAD" and branches:
+                        rev = branches[0]
 
             for commit in repo.iter_commits(rev):
                 commits.append({
