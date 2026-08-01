@@ -987,60 +987,67 @@ async def requirements_stream(req: Optional[RequirementsRequest] = Body(None), v
     udf = LLMUDF(session_id=session_id)
 
     async def event_generator():
-        full_response = ""
-        # We'll collect the full response first, then extract first JSON
-        async for token in udf.generate_requirements_stream(symbols, calls):
-            full_response += token
-            # yield f"data: {json.dumps({'token': token})}\n\n"
-            yield f"data: {json.dumps({'token': token, 'partial': full_response})}\n\n"
-
-        # Parse and store traceability
         try:
-            req_json = json.loads(full_response)
-            cleaned = full_response
-        except json.JSONDecodeError:
-            # fallback: use extract_json
-            req_json = extract_json(full_response)
-            cleaned = json.dumps(req_json)
-            if "error" in req_json:
-                req_json = {"raw": full_response, "error": "JSON parse failed"}
+            full_response = ""
+            # We'll collect the full response first, then extract first JSON
+            async for token in udf.generate_requirements_stream(symbols, calls):
+                full_response += token
+                # yield f"data: {json.dumps({'token': token})}\n\n"
+                yield f"data: {json.dumps({'token': token, 'partial': full_response})}\n\n"
 
-        # Store provenance data
-        grounded_in = [s["id"] for s in symbols if "id" in s] + [c["id"] for c in calls if "id" in c]
-        is_verified, confidence = udf.validate_artifact(req_json, symbols, calls)
+            # Parse and store traceability
+            try:
+                req_json = json.loads(full_response)
+                cleaned = full_response
+            except json.JSONDecodeError:
+                # fallback: use extract_json
+                req_json = extract_json(full_response)
+                cleaned = json.dumps(req_json)
+                if "error" in req_json:
+                    req_json = {"raw": full_response, "error": "JSON parse failed"}
 
-        await storage.insert_llm_artifact(
-            artifact_type="requirement",
-            value=cleaned,
-            version=version,
-            grounded_in=grounded_in,
-            prompt=udf.handler.build_prompt(symbols, calls),
-            model=MODEL,
-            is_verified=is_verified,
-            confidence=confidence
-        )
+            # Store provenance data
+            grounded_in = [s["id"] for s in symbols if "id" in s] + [c["id"] for c in calls if "id" in c]
+            is_verified, confidence = udf.validate_artifact(req_json, symbols, calls)
 
-        traceability_stored = False
-        if "tasks" in req_json and isinstance(req_json["tasks"], list):
-            for task in req_json["tasks"]:
-                trace_list = task.get("traceability", [])
-                if not trace_list:
-                    trace_list = fuzzy_match_symbols(task.get("text", ""), symbols)
-                for symbol_id in trace_list:
-                    epic = req_json.get("epic", "UNKNOWN")
-                    req_id = f"{epic[:20]}_{task.get('text', 'TASK')[:20]}".replace(" ", "_")
-                    await db.execute(
-                        text("""
-                            INSERT INTO requirement_traceability (requirement_id, symbol_id, confidence)
-                            VALUES (:rid, :sid, 1.0)
-                            ON CONFLICT (requirement_id, symbol_id) DO NOTHING
-                        """),
-                        {"rid": req_id, "sid": symbol_id}
-                    )
-                traceability_stored = True
-            await db.commit()
+            await storage.insert_llm_artifact(
+                artifact_type="requirement",
+                value=cleaned,
+                version=version,
+                grounded_in=grounded_in,
+                prompt=udf.handler.build_prompt(symbols, calls),
+                model=MODEL,
+                is_verified=is_verified,
+                confidence=confidence
+            )
 
-        yield f"data: {json.dumps({'done': True, 'traceability_stored': traceability_stored})}\n\n"
+            traceability_stored = False
+            if "tasks" in req_json and isinstance(req_json["tasks"], list):
+                for task in req_json["tasks"]:
+                    trace_list = task.get("traceability", [])
+                    if not trace_list:
+                        trace_list = fuzzy_match_symbols(task.get("text", ""), symbols)
+                    for symbol_id in trace_list:
+                        epic = req_json.get("epic", "UNKNOWN")
+                        req_id = f"{epic[:20]}_{task.get('text', 'TASK')[:20]}".replace(" ", "_")
+                        await db.execute(
+                            text("""
+                                INSERT INTO requirement_traceability (requirement_id, symbol_id, confidence)
+                                VALUES (:rid, :sid, 1.0)
+                                ON CONFLICT (requirement_id, symbol_id) DO NOTHING
+                            """),
+                            {"rid": req_id, "sid": symbol_id}
+                        )
+                    traceability_stored = True
+                await db.commit()
+
+            yield f"data: {json.dumps({'done': True, 'traceability_stored': traceability_stored})}\n\n"
+        except Exception as e:
+            error_payload = {
+                "error": f"LLM Generation failed: {str(e)}",
+                "done": True
+            }
+            yield f"data: {json.dumps(error_payload)}\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
