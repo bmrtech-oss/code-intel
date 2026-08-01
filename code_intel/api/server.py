@@ -453,6 +453,27 @@ async def get_branches_and_commits(repo_path: str, branch: Optional[str] = None,
 
             # Perform recursive lookup over parent commits
             rev = branch or "HEAD"
+            if rev != "HEAD":
+                # Check and resolve valid local or remote references (like origin/dev)
+                possible_refs = [
+                    rev,
+                    f"origin/{rev}",
+                    f"refs/remotes/origin/{rev}",
+                    f"refs/heads/{rev}"
+                ]
+                resolved_rev = None
+                for r in possible_refs:
+                    try:
+                        repo.commit(r)
+                        resolved_rev = r
+                        break
+                    except Exception:
+                        continue
+                if resolved_rev:
+                    rev = resolved_rev
+                else:
+                    rev = "HEAD"
+
             if rev == "HEAD":
                 try:
                     rev = repo.active_branch.name
@@ -464,7 +485,7 @@ async def get_branches_and_commits(repo_path: str, branch: Optional[str] = None,
                     if rev == "HEAD" and branches:
                         rev = branches[0]
 
-            for commit in repo.iter_commits(rev):
+            for commit in repo.iter_commits(rev, max_count=50):
                 commits.append({
                     "sha": commit.hexsha,
                     "author": commit.author.name or "Unknown",
