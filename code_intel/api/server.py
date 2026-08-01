@@ -2,7 +2,7 @@ import os
 import re
 import json
 from ..utils.traceability import fuzzy_match_symbols
-from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks, Response
+from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks, Response, Body
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -47,7 +47,8 @@ for o in common_origins:
 # nosec
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # nosemgrep: python.fastapi.security.wildcard-cors.wildcard-cors
+    allow_origins=origins,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -942,7 +943,7 @@ async def query(req: QueryRequest, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=400, detail=str(e))
 
 @app.post("/requirements/stream")
-async def requirements_stream(req: Optional[RequirementsRequest] = None, version: Optional[str] = None, session_id: Optional[str] = "default", db: AsyncSession = Depends(get_db)):
+async def requirements_stream(req: Optional[RequirementsRequest] = Body(None), version: Optional[str] = None, session_id: Optional[str] = "default", db: AsyncSession = Depends(get_db)):
     storage = VersionedStorage(db)
     version = version or await storage.get_current_version()
     if not version:
@@ -1044,7 +1045,7 @@ async def requirements_stream(req: Optional[RequirementsRequest] = None, version
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 @app.post("/requirements", status_code=202)
-async def requirements(req: Optional[RequirementsRequest] = None, version: Optional[str] = None, session_id: Optional[str] = "default", db: AsyncSession = Depends(get_db)):
+async def requirements(req: Optional[RequirementsRequest] = Body(None), version: Optional[str] = None, session_id: Optional[str] = "default", db: AsyncSession = Depends(get_db)):
     storage = VersionedStorage(db)
     version = version or await storage.get_current_version()
     if not version:

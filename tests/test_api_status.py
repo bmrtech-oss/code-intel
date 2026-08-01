@@ -44,21 +44,21 @@ def test_api_status_cors():
         "/status",
         headers={"Origin": "tauri://localhost", "Access-Control-Request-Method": "GET"}
     )
-    assert response.headers.get("access-control-allow-origin") == "*"
+    assert response.headers.get("access-control-allow-origin") == "tauri://localhost"
 
     # Test http://tauri.localhost origin
     response = client.get(
         "/status",
         headers={"Origin": "http://tauri.localhost", "Access-Control-Request-Method": "GET"}
     )
-    assert response.headers.get("access-control-allow-origin") == "*"
+    assert response.headers.get("access-control-allow-origin") == "http://tauri.localhost"
 
     # Test http://localhost origin
     response = client.get(
         "/status",
         headers={"Origin": "http://localhost", "Access-Control-Request-Method": "GET"}
     )
-    assert response.headers.get("access-control-allow-origin") == "*"
+    assert response.headers.get("access-control-allow-origin") == "http://localhost"
 
 def test_analyze_stream_redis_data():
     client = TestClient(app)
