@@ -9,6 +9,7 @@ class PythonVisitor:
         self.version = version
         self.current_scope = []
         self.source_text = ""
+        self.imports_map = {}
         self.root_path = root_path
         # Compute relative path from the repository root
         if root_path:
@@ -118,6 +119,14 @@ class PythonVisitor:
             function_node = node.child_by_field_name("function")
             if function_node:
                 callee = self._node_text(function_node)
+                # Resolve local imported prefix using imports_map
+                if "." in callee:
+                    parts = callee.split(".")
+                    first_part = parts[0]
+                    if first_part in self.imports_map:
+                        callee = self.imports_map[first_part] + "." + ".".join(parts[1:])
+                elif callee in self.imports_map:
+                    callee = self.imports_map[callee]
                 caller = ".".join([self.module_name] + self.current_scope)
 
                 confidence = 1.0
@@ -208,6 +217,12 @@ class PythonVisitor:
                             search_roots.append(src_folder)
 
                         for spec in imported_names:
+                            # Populate imports_map
+                            self.imports_map[spec] = spec
+                            if "." in spec:
+                                last_name = spec.split(".")[-1]
+                                self.imports_map[last_name] = spec
+
                             rel_path_str = spec.replace(".", "/")
                             resolved_file = None
                             for s_root in search_roots:
