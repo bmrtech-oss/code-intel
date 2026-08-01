@@ -6,7 +6,7 @@ from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks, Response
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
@@ -268,6 +268,9 @@ class QueryRequest(BaseModel):
     commit_sha: Optional[str] = None
     symbol: Optional[str] = None
     depth: Optional[int] = 3
+
+class RequirementsRequest(BaseModel):
+    symbol_ids: Optional[List[str]] = None
 
 class LLMConfigRequest(BaseModel):
     provider: str
@@ -939,7 +942,7 @@ async def query(req: QueryRequest, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=400, detail=str(e))
 
 @app.post("/requirements/stream")
-async def requirements_stream(version: Optional[str] = None, session_id: Optional[str] = "default", db: AsyncSession = Depends(get_db)):
+async def requirements_stream(req: Optional[RequirementsRequest] = None, version: Optional[str] = None, session_id: Optional[str] = "default", db: AsyncSession = Depends(get_db)):
     storage = VersionedStorage(db)
     version = version or await storage.get_current_version()
     if not version:
@@ -958,6 +961,27 @@ async def requirements_stream(version: Optional[str] = None, session_id: Optiona
         JOIN facts f ON c.call_id = f.entity_id AND c.version = f.version AND f.attribute = 'callee'
         WHERE c.version = :v AND f.valid_to IS NULL
     """, {"v": version})
+
+    # Apply adaptive grounding context filter if symbol_ids are specified
+    if req and req.symbol_ids:
+        filtered_symbols = [s for s in symbols if s.get("name") in req.symbol_ids]
+        if not filtered_symbols:
+            # Fall back to matching files or parent modules
+            possible_files = set()
+            for sid in req.symbol_ids:
+                clean_id = sid.replace("file:", "")
+                if clean_id.endswith(".py") or "/" in clean_id or "\\" in clean_id:
+                    possible_files.add(clean_id)
+                for s in symbols:
+                    if s.get("name") and s.get("name").startswith(sid):
+                        if s.get("file"):
+                            possible_files.add(s.get("file"))
+            if possible_files:
+                filtered_symbols = [s for s in symbols if s.get("file") in possible_files]
+
+        symbols = filtered_symbols
+        active_symbol_names = {s.get("name") for s in symbols if s.get("name")}
+        calls = [c for c in calls if c.get("caller") in active_symbol_names or c.get("callee") in active_symbol_names]
     
     udf = LLMUDF(session_id=session_id)
 
@@ -1020,12 +1044,14 @@ async def requirements_stream(version: Optional[str] = None, session_id: Optiona
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 @app.post("/requirements", status_code=202)
-async def requirements(version: Optional[str] = None, session_id: Optional[str] = "default", db: AsyncSession = Depends(get_db)):
+async def requirements(req: Optional[RequirementsRequest] = None, version: Optional[str] = None, session_id: Optional[str] = "default", db: AsyncSession = Depends(get_db)):
     storage = VersionedStorage(db)
     version = version or await storage.get_current_version()
     if not version:
         raise HTTPException(status_code=400, detail="No version found")
     
+    # We pass the list of focused symbol_ids to the task if requested
+    symbol_ids = req.symbol_ids if req else None
     job = llm_queue.enqueue(generate_requirements_task, version, session_id)
     return {"job_id": job.id, "status": "pending"}
 
@@ -1096,3 +1122,55 @@ async def get_provenance(fact_id: int, db: AsyncSession = Depends(get_db)):
     storage = VersionedStorage(db)
     result = await storage.get_artifacts_by_fact(fact_id)
     return {"fact_id": fact_id, "artifacts": result}
+
+@app.post("/api/open-editor")
+async def open_editor(payload: dict):
+    file_path = payload.get("file_path")
+    if not file_path:
+        raise HTTPException(status_code=400, detail="Missing file_path")
+
+    # Strip file: prefix if present
+    if file_path.startswith("file:"):
+        file_path = file_path[5:]
+
+    # Security Check: Prevent directory traversal or arbitrary file handling
+    if not is_safe_path(file_path):
+        raise HTTPException(status_code=400, detail="Unauthorized or unsafe file path")
+
+    import sys
+    import subprocess
+    import os
+
+    try:
+        if sys.platform == "win32":
+            os.startfile(file_path)
+        elif sys.platform == "darwin":
+            subprocess.run(["open", file_path], check=True)
+        else:
+            subprocess.run(["xdg-open", file_path], check=True)
+        return {"status": "success"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to open file: {str(e)}")
+
+@app.get("/api/references")
+async def find_references(symbol_id: str, version: str, db: AsyncSession = Depends(get_db)):
+    # Find all edges where target matches symbol_id
+    version = await find_best_version(version, db)
+
+    try:
+        result = await db.execute(
+            text("SELECT from_fqn FROM graph_edges WHERE to_fqn = :sym AND version = :v"),
+            {"sym": symbol_id, "v": version}
+        )
+        callers = [row[0] for row in result.all()]
+    except Exception:
+        try:
+            result = await db.execute(
+                text("SELECT caller FROM current_calls WHERE callee = :sym AND version = :v"),
+                {"sym": symbol_id, "v": version}
+            )
+            callers = [row[0] for row in result.all()]
+        except Exception:
+            callers = []
+
+    return {"references": list(set(callers))}

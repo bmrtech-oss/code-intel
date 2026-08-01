@@ -220,6 +220,62 @@ def test_get_repo_tree():
     finally:
         app.dependency_overrides.clear()
 
+def test_open_editor():
+    client = TestClient(app)
+
+    # 1. Unsafe path should be rejected
+    response = client.post("/api/open-editor", json={"file_path": "/etc/passwd"})
+    assert response.status_code == 400
+    assert "unauthorized" in response.json()["detail"].lower()
+
+    # 2. Safe path (like current directory file) with mock startfile/run
+    with patch("sys.platform", "win32"), patch("os.startfile", create=True) as mock_startfile:
+        response = client.post("/api/open-editor", json={"file_path": "code_intel/api/server.py"})
+        assert response.status_code == 200
+        assert response.json()["status"] == "success"
+        mock_startfile.assert_called_once_with("code_intel/api/server.py")
+
+
+def test_find_references():
+    client = TestClient(app)
+
+    mock_db = MagicMock()
+    mock_execute = AsyncMock()
+    mock_db.execute = mock_execute
+
+    async def mock_execute_fn(query, params=None):
+        query_str = str(query)
+        if "LIMIT 1" in query_str:
+            mock_res = MagicMock()
+            mock_res.scalar.return_value = None
+            return mock_res
+        elif "DISTINCT version" in query_str:
+            mock_res = MagicMock()
+            mock_res.mappings.return_value = []
+            return mock_res
+        elif "from_fqn" in query_str or "caller" in query_str:
+            mock_res = MagicMock()
+            # Mock .all() return value which yields rows as tuples
+            mock_res.all.return_value = [("caller_1",)]
+            return mock_res
+        return MagicMock()
+
+    mock_execute.side_effect = mock_execute_fn
+
+    async def override_get_db():
+        yield mock_db
+
+    app.dependency_overrides[get_db] = override_get_db
+
+    try:
+        response = client.get("/api/references?symbol_id=target_sym&version=v1")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["references"] == ["caller_1"]
+
+    finally:
+        app.dependency_overrides.clear()
+
 def test_get_version_status():
     client = TestClient(app)
 
