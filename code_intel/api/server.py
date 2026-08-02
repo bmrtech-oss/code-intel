@@ -890,22 +890,32 @@ async def get_graph(version: str, response: Response, level: str = "file", focus
 
         symbol_to_file = {n["fqn"]: n["file"] for n in db_nodes if n.get("file")}
 
+        # Suffix-matching lookup map for unqualified/partially-qualified symbols (e.g. read_csv_data)
+        suffix_to_file = {}
+        for fqn, filepath in symbol_to_file.items():
+            parts = fqn.split(".")
+            for i in range(1, min(len(parts) + 1, 4)):
+                suffix = ".".join(parts[-i:])
+                if suffix not in suffix_to_file:
+                    suffix_to_file[suffix] = filepath
+
         seen_edges = set()
         for e in db_edges:
             src_symbol = e.get("from_fqn")
             tgt_symbol = e.get("to_fqn")
-            if src_symbol in symbol_to_file and tgt_symbol in symbol_to_file:
-                src_file = symbol_to_file[src_symbol]
-                tgt_file = symbol_to_file[tgt_symbol]
-                if src_file != tgt_file:
-                    edge_tuple = (src_file, tgt_file)
-                    if edge_tuple not in seen_edges:
-                        seen_edges.add(edge_tuple)
-                        edges.append({
-                            "source": f"file:{src_file}",
-                            "target": f"file:{tgt_file}",
-                            "type": "imports"
-                        })
+
+            src_file = symbol_to_file.get(src_symbol) or suffix_to_file.get(src_symbol)
+            tgt_file = symbol_to_file.get(tgt_symbol) or suffix_to_file.get(tgt_symbol)
+
+            if src_file and tgt_file and src_file != tgt_file:
+                edge_tuple = (src_file, tgt_file)
+                if edge_tuple not in seen_edges:
+                    seen_edges.add(edge_tuple)
+                    edges.append({
+                        "source": f"file:{src_file}",
+                        "target": f"file:{tgt_file}",
+                        "type": "imports"
+                    })
     else: # level == "all"
         # Full function-level network or radial depth 1 around focus_symbol
         symbol_to_kind = {n["fqn"]: n.get("kind", "symbol") for n in db_nodes}
@@ -916,7 +926,11 @@ async def get_graph(version: str, response: Response, level: str = "file", focus
             for e in db_edges:
                 src = e.get("from_fqn")
                 tgt = e.get("to_fqn")
-                if src == focus_symbol or tgt == focus_symbol:
+
+                is_src_match = (src == focus_symbol or (src and focus_symbol.endswith("." + src)))
+                is_tgt_match = (tgt == focus_symbol or (tgt and focus_symbol.endswith("." + tgt)))
+
+                if is_src_match or is_tgt_match:
                     if src:
                         keep_nodes.add(src)
                     if tgt:
