@@ -209,12 +209,66 @@ def extract_json(text: str):
     
     return {"raw": text, "error": "Could not parse JSON"}
 
+async def run_startup_llm_check():
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info("Running startup LLM connectivity check...")
+
+    # Instantiate LLMUDF with the default (env-based) settings
+    udf = LLMUDF(session_id="default")
+    try:
+        if udf.provider == "ollama":
+            # Very lightweight check
+            await udf.ollama_client.generate(
+                model=udf.model,
+                prompt="test",
+                options={"num_predict": 2}
+            )
+        elif udf.provider in ("openrouter", "openai"):
+            import httpx
+            async with httpx.AsyncClient() as client:
+                headers = {
+                    "Authorization": f"Bearer {udf.api_key}",
+                    "Content-Type": "application/json"
+                }
+                payload = {
+                    "model": udf.model,
+                    "messages": [{"role": "user", "content": "hi"}],
+                    "max_tokens": 2,
+                    "temperature": 0.0
+                }
+                resp = await client.post(
+                    f"{udf.base_url}/chat/completions",
+                    headers=headers,
+                    json=payload,
+                    timeout=5.0
+                )
+                resp.raise_for_status()
+        elif udf.provider == "google":
+            import asyncio
+            loop = asyncio.get_event_loop()
+            def _gen():
+                resp = udf.google_client.generate_content("hi")
+                return resp.text
+            await loop.run_in_executor(None, _gen)
+
+        logger.info(f"Startup LLM connectivity check SUCCESS for provider: {udf.provider}, model: {udf.model}")
+    except Exception as e:
+        logger.warning(
+            f"Startup LLM connectivity check FAILED for provider: {udf.provider}, model: {udf.model}. "
+            f"Error: {e}. Services will still start normally."
+        )
+
 @app.on_event("startup")
 async def init_db():
     async with engine.begin() as conn:
         if engine.dialect.name == "postgresql":
             await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         await conn.run_sync(Base.metadata.create_all)
+
+    # Run background LLM connectivity check
+    import asyncio
+    asyncio.create_task(run_startup_llm_check())
 
     # Handle schema versioning and deprecation
     async with AsyncSessionLocal() as session:
@@ -277,6 +331,9 @@ class LLMConfigRequest(BaseModel):
     provider: str
     model: str
     api_key: str
+    session_id: Optional[str] = "default"
+
+class TestLLMRequest(BaseModel):
     session_id: Optional[str] = "default"
 
 @app.post("/analyze")
@@ -351,6 +408,66 @@ async def config_llm(req: LLMConfigRequest):
         raise HTTPException(status_code=500, detail="Failed to save LLM configuration in memory cache")
 
     return {"status": "success", "message": "LLM configuration applied dynamically"}
+
+@app.post("/config/llm/test")
+async def test_llm_connection(req: Optional[TestLLMRequest] = Body(None)):
+    session_id = req.session_id if req else "default"
+    udf = LLMUDF(session_id=session_id)
+
+    # We will run a lightweight, minimal-token query to verify connectivity
+    try:
+        if udf.provider == "ollama":
+            response = await udf.ollama_client.generate(
+                model=udf.model,
+                prompt="test",
+                options={"num_predict": 5}
+            )
+            text_resp = response.response
+        elif udf.provider in ("openrouter", "openai"):
+            import httpx
+            async with httpx.AsyncClient() as client:
+                headers = {
+                    "Authorization": f"Bearer {udf.api_key}",
+                    "Content-Type": "application/json"
+                }
+                payload = {
+                    "model": udf.model,
+                    "messages": [{"role": "user", "content": "hi"}],
+                    "max_tokens": 5,
+                    "temperature": 0.0
+                }
+                resp = await client.post(
+                    f"{udf.base_url}/chat/completions",
+                    headers=headers,
+                    json=payload,
+                    timeout=10.0
+                )
+                resp.raise_for_status()
+                text_resp = resp.json()["choices"][0]["message"]["content"]
+        elif udf.provider == "google":
+            import asyncio
+            loop = asyncio.get_event_loop()
+            def _gen():
+                resp = udf.google_client.generate_content("hi")
+                return resp.text
+            text_resp = await loop.run_in_executor(None, _gen)
+        else:
+            raise ValueError(f"Unsupported provider: {udf.provider}")
+
+        return {
+            "status": "success",
+            "message": "LLM connection verified successfully",
+            "provider": udf.provider,
+            "model": udf.model,
+            "response": text_resp.strip()
+        }
+    except Exception as e:
+        return {
+            "status": "failed",
+            "error": str(e),
+            "provider": udf.provider,
+            "model": udf.model
+        }
 
 @app.get("/analyze/stream")
 async def analyze_stream(job_id: str):

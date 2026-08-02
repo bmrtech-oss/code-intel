@@ -220,6 +220,29 @@ def test_get_repo_tree():
     finally:
         app.dependency_overrides.clear()
 
+def test_post_config_llm_test():
+    client = TestClient(app)
+
+    # Mock OllamaClient.generate to verify successful test response
+    with patch("redis.Redis") as mock_redis, \
+         patch("code_intel.core.udf.AsyncClient") as mock_ollama_client_class:
+
+        mock_redis.return_value.get.return_value = None
+
+        mock_ollama_client = AsyncMock()
+        mock_response = MagicMock()
+        mock_response.response = "success_test_token"
+        mock_ollama_client.generate.return_value = mock_response
+        mock_ollama_client_class.return_value = mock_ollama_client
+
+        # We force LLM_PROVIDER as ollama
+        with patch("code_intel.core.udf.LLM_PROVIDER", "ollama"):
+            response = client.post("/config/llm/test", json={"session_id": "default"})
+            assert response.status_code == 200
+            data = response.json()
+            assert data["status"] == "success"
+            assert "success_test_token" in data["response"]
+
 def test_open_editor():
     client = TestClient(app)
 
