@@ -11,7 +11,7 @@ NC='\033[0m'
 
 # --- Configuration & Defaults ---
 DEFAULT_PROVIDER="openrouter"
-DEFAULT_MODEL="google/gemini-2.5-flash:free"
+DEFAULT_MODEL="openai/gpt-oss-120b:free"
 DEFAULT_REPO_URL="https://github.com/neubig/starter-repo"
 DEFAULTS_MODE=false
 
@@ -126,7 +126,7 @@ if command -v code-intel >/dev/null 2>&1 || [ -d ".venv" ]; then
 else
     # Fallback to using the container for analysis
     if command -v podman-compose >/dev/null 2>&1; then COMPOSE_CMD="podman-compose"; else COMPOSE_CMD="docker compose"; fi
-    $COMPOSE_CMD exec api code-intel analyze "$REPO_SOURCE" --version "$DEMO_VERSION"
+    $COMPOSE_CMD exec -i api code-intel analyze "$REPO_SOURCE" --version "$DEMO_VERSION"
 fi
 echo -e "  ${GREEN}✅ Ingestion complete.${NC}"
 
