@@ -1084,12 +1084,20 @@ async def requirements_stream(req: Optional[RequirementsRequest] = Body(None), v
     if req and req.symbol_ids:
         filtered_symbols = [s for s in symbols if s.get("name") in req.symbol_ids]
         if not filtered_symbols:
-            # Fall back to matching files or parent modules
+            # Suffix/ends-with matching for absolute paths vs. relative database paths
             possible_files = set()
             for sid in req.symbol_ids:
                 clean_id = sid.replace("file:", "")
-                if clean_id.endswith(".py") or "/" in clean_id or "\\" in clean_id:
-                    possible_files.add(clean_id)
+                clean_id_normalized = clean_id.replace("\\", "/").strip("/")
+
+                for s in symbols:
+                    s_file = s.get("file")
+                    if s_file:
+                        s_file_normalized = s_file.replace("\\", "/").strip("/")
+                        if clean_id_normalized.endswith(s_file_normalized) or s_file_normalized.endswith(clean_id_normalized):
+                            possible_files.add(s_file)
+
+                # Parent module name match
                 for s in symbols:
                     if s.get("name") and s.get("name").startswith(sid):
                         if s.get("file"):
