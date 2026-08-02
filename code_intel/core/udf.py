@@ -114,7 +114,7 @@ class LLMUDF:
             self.api_key = LLM_API_KEY
 
         # Self-healing Fallback for deprecated OpenRouter models (e.g. gpt-oss-120b)
-        if self.provider == "openrouter":
+        if self.provider in ("openrouter", "openai"):
             if "gpt-oss-120b" in self.model:
                 logging.warning(f"Model '{self.model}' is deprecated on OpenRouter. Falling back to 'google/gemini-2.5-flash:free' for stability.")
                 self.model = "google/gemini-2.5-flash:free"

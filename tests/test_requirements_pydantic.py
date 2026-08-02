@@ -61,3 +61,14 @@ async def test_generate_requirements_fallback():
     result = await udf.generate_requirements([], [])
     assert result["result"]["epic"] == "Fallback"
     assert "error" not in result["result"]
+
+def test_openrouter_model_fallback():
+    from unittest.mock import patch
+
+    with patch("redis.Redis") as mock_redis:
+        mock_redis.return_value.get.return_value = None
+
+        with patch("code_intel.core.udf.LLM_MODEL", "openai/gpt-oss-120b:free"), \
+             patch("code_intel.core.udf.LLM_PROVIDER", "openrouter"):
+            udf_test = LLMUDF()
+            assert udf_test.model == "google/gemini-2.5-flash:free"
