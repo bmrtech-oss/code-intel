@@ -11,7 +11,7 @@ NC='\033[0m'
 
 # --- Configuration & Defaults ---
 DEFAULT_PROVIDER="openrouter"
-DEFAULT_MODEL="openai/gpt-oss-120b:free"
+DEFAULT_MODEL="google/gemini-2.5-flash:free"
 DEFAULT_REPO_URL="https://github.com/neubig/starter-repo"
 DEFAULTS_MODE=false
 

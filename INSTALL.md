@@ -63,7 +63,7 @@ For a fully non-interactive demo that uses the recommended defaults, run:
 ./demo.sh --defaults --repo-url=https://github.com/neubig/starter-repo
 ```
 
-The demo will automatically use the OpenRouter provider, the `openai/gpt-oss-120b:free` model, and the API key from `.env` unless you override those values.
+The demo will automatically use the OpenRouter provider, the `google/gemini-2.5-flash:free` model, and the API key from `.env` unless you override those values.
 
 ---
 

@@ -12,7 +12,7 @@ The fastest way to see Code-Intel in action is to run:
 ./demo.sh
 ```
 
-By default, the demo now uses OpenRouter with the `openai/gpt-oss-120b:free` model, analyzes `https://github.com/neubig/starter-repo`, and pulls the API key from `.env` automatically. For a fully non-interactive run, use:
+By default, the demo now uses OpenRouter with the `google/gemini-2.5-flash:free` model, analyzes `https://github.com/neubig/starter-repo`, and pulls the API key from `.env` automatically. For a fully non-interactive run, use:
 
 ```bash
 ./demo.sh --defaults --repo-url=https://github.com/neubig/starter-repo

@@ -101,7 +101,7 @@ Experience the full power of Code-Intel (Intelligence, Prediction, Verification,
 
 The demo now defaults to:
 - **Provider**: OpenRouter
-- **Model**: `openai/gpt-oss-120b:free`
+- **Model**: `google/gemini-2.5-flash:free`
 - **Repository**: `https://github.com/neubig/starter-repo`
 - **API key**: loaded from `.env` via `LLM_API_KEY`
 
