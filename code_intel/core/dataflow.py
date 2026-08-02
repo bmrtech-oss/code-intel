@@ -171,12 +171,17 @@ class LocalGraphEngine(BaseGraphEngine):
             db_dir = os.path.dirname(GRAPHQLITE_DB_PATH)
             if db_dir:
                 os.makedirs(db_dir, exist_ok=True)
-            self.g = graphqlite.Graph(GRAPHQLITE_DB_PATH)
+            # Verify extension loading succeeds once
+            g_verify = graphqlite.Graph(GRAPHQLITE_DB_PATH)
         except Exception as e:
             raise RuntimeError(
                 f"Failed to initialize GraphQLite Graph at {GRAPHQLITE_DB_PATH or 'None'}: {e}. "
                 "This may be because your Python runtime's sqlite3 module does not support extension loading."
             )
+
+    def get_graph_conn(self) -> Any:
+        from ..settings import GRAPHQLITE_DB_PATH
+        return graphqlite.Graph(GRAPHQLITE_DB_PATH)
 
     async def transitive_calls(self, version: str) -> List[Dict[str, Any]]:
         cached = await self.storage.get_derived_fact("transitive_calls", version)
@@ -188,7 +193,8 @@ class LocalGraphEngine(BaseGraphEngine):
         dep_ids = [d["id"] for d in deps]
 
         def _query_transitive():
-            results = self.g.query(
+            g_conn = self.get_graph_conn()
+            results = g_conn.query(
                 "MATCH (caller)-[:CALLS*]->(callee) "
                 "RETURN DISTINCT caller.id AS caller, callee.id AS callee"
             )
@@ -232,7 +238,8 @@ class LocalGraphEngine(BaseGraphEngine):
         dep_ids = [d["id"] for d in deps]
 
         def _query_impact():
-            results = self.g.query(
+            g_conn = self.get_graph_conn()
+            results = g_conn.query(
                 "MATCH p = (callee {id: $sym})<-[:CALLS*1..$depth]-(caller) "
                 "RETURN caller.id AS caller, length(p) AS depth",
                 {"sym": symbol, "depth": depth}
@@ -266,13 +273,14 @@ class LocalGraphEngine(BaseGraphEngine):
         )
 
         def _sync():
+            g_conn = self.get_graph_conn()
             try:
-                self.g.query("MATCH (n) DETACH DELETE n")
+                g_conn.query("MATCH (n) DETACH DELETE n")
             except Exception:
                 pass
 
             for n in nodes:
-                self.g.upsert_node(
+                g_conn.upsert_node(
                     node_id=n["fqn"],
                     label="Symbol",
                     properties={
@@ -282,7 +290,7 @@ class LocalGraphEngine(BaseGraphEngine):
                     }
                 )
             for e in edges:
-                self.g.upsert_edge(
+                g_conn.upsert_edge(
                     source_id=e["from_fqn"],
                     target_id=e["to_fqn"],
                     rel_type="CALLS",
