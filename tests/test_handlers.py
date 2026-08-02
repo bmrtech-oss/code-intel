@@ -39,3 +39,14 @@ async def test_go_handler():
     assert "main.Logger" in names
     assert "main.Logger.Log" in names
     assert "main.DeadGoFunction" in names
+
+@pytest.mark.asyncio
+async def test_python_visitor_relative_resolution():
+    storage = AsyncMock()
+    # Test with custom root_path and nested subdirectory
+    visitor = PythonVisitor(storage, "tests/golden/python/api.py", "v1", root_path="tests/golden")
+    assert visitor.module_name == "python.api"
+
+    # Test with custom root_path and nested src/ directory prefix stripping
+    visitor_src = PythonVisitor(storage, "/tmp/repo/src/app/main.py", "v1", root_path="/tmp/repo")
+    assert visitor_src.module_name == "app.main"

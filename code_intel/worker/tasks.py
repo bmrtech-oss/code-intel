@@ -19,6 +19,15 @@ async def _run_ingestion(repo_path: str, version: str, job_id: str = None):
             pipeline = IngestionPipeline(storage)
             await pipeline.walk_and_parse(repo_path, version, job_id=job_id)
             await session.commit()
+
+            # Automatically sync/rebuild the graph and read models
+            try:
+                from ..core.dataflow import DataflowEngine
+                dataflow = DataflowEngine(storage)
+                await dataflow.rebuild_graph(version)
+                await session.commit()
+            except Exception as e:
+                print(f"Error automatically rebuilding graph after ingestion: {e}")
     finally:
         if job_id:
             try:
@@ -50,6 +59,22 @@ def run_ingestion(repo_path: str, version: str, is_git_url: bool = False, branch
             actual_path = temp_handler.clone()
         # ... run ingestion on actual_path ...
         asyncio.run(_run_ingestion(actual_path, version, job_id=job_id))
+    except Exception as e:
+        print(f"Exception during ingestion task: {e}")
+        if job_id:
+            try:
+                import json
+                from redis import Redis
+                r = Redis(host=os.getenv("REDIS_HOST", "redis"), port=6379)
+                r.set(f"progress:{job_id}", json.dumps({
+                    "file": "",
+                    "progress": 100,
+                    "done": True,
+                    "error": str(e)
+                }))
+            except Exception as redis_err:
+                print(f"Failed to record exception in Redis: {redis_err}")
+        raise e
     finally:
         if temp_handler:
             temp_handler.cleanup()

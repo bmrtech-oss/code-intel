@@ -3,19 +3,39 @@ from ..core.storage import VersionedStorage
 import os
 
 class PythonVisitor:
-    def __init__(self, storage: VersionedStorage, file_path: str, version: str):
+    def __init__(self, storage: VersionedStorage, file_path: str, version: str, root_path: str = None):
         self.storage = storage
         self.file_path = file_path
         self.version = version
         self.current_scope = []
         self.source_text = ""
-        # Basic module name from file path
-        module_name = os.path.splitext(file_path)[0].replace("\\", ".").replace("/", ".")
+        self.imports_map = {}
+        self.root_path = root_path
+        # Compute relative path from the repository root
+        if root_path:
+            rel_path = os.path.relpath(os.path.abspath(file_path), os.path.abspath(root_path))
+        else:
+            # Fallback relative to current working directory
+            rel_path = os.path.relpath(file_path, os.getcwd())
+
+        # Normalize separators and strip extension
+        module_name = os.path.splitext(rel_path)[0].replace('\\\\', ".").replace("/", ".")
+        module_name = module_name.lstrip(".")
+
+        # Strip common source prefixes to align with Python import paths (e.g. "src.")
+        if module_name.startswith("src."):
+            module_name = module_name[4:]
+        elif module_name.startswith("source."):
+            module_name = module_name[7:]
+
         if module_name.startswith("code_intel."):
             module_name = module_name[4:]
         self.module_name = module_name
 
     async def parse(self):
+        # Register the module itself as a symbol
+        await self.storage.insert_symbol(self.file_path, self.module_name, "module", 1, self.version)
+
         with open(self.file_path, "r", encoding="utf-8") as f:
             code_intel = f.read()
         self.source_text = code_intel
@@ -59,7 +79,7 @@ class PythonVisitor:
                 fqn = self._get_fqn(name)
                 line = self._node_line(name_node)
                 docstring = self._extract_docstring(node)
-                
+
                 await self.storage.insert_symbol(self.file_path, fqn, "class", line, self.version)
                 if docstring:
                     await self.storage.insert_fact("symbol", f"class:{fqn}", "docstring", docstring, self.version)
@@ -78,7 +98,7 @@ class PythonVisitor:
                 line = self._node_line(name_node)
                 kind_name = "method" if self.current_scope else "function"
                 docstring = self._extract_docstring(node)
-                
+
                 # Extract signature (parameters)
                 params_node = node.child_by_field_name("parameters")
                 signature = self._node_text(params_node) if params_node else ""
@@ -99,18 +119,26 @@ class PythonVisitor:
             function_node = node.child_by_field_name("function")
             if function_node:
                 callee = self._node_text(function_node)
+                # Resolve local imported prefix using imports_map
+                if "." in callee:
+                    parts = callee.split(".")
+                    first_part = parts[0]
+                    if first_part in self.imports_map:
+                        callee = self.imports_map[first_part] + "." + ".".join(parts[1:])
+                elif callee in self.imports_map:
+                    callee = self.imports_map[callee]
                 caller = ".".join([self.module_name] + self.current_scope)
-                
+
                 confidence = 1.0
                 fn_kind = self._node_kind(function_node)
-                
+
                 # Heuristic: attribute access is likely polymorphic or cross-file
                 if fn_kind == "attribute":
                     confidence = 0.5
                 # Dynamic reflection calls
                 elif callee in ("getattr", "setattr", "hasattr", "__import__", "exec", "eval"):
                     confidence = 0.3
-                
+
                 await self.storage.insert_call(caller, callee, confidence, self.version)
 
                 if fn_kind == "attribute":
@@ -124,6 +152,91 @@ class PythonVisitor:
                 # This is a simplification; normally we'd check if module_name is in our indexed set
                 caller = ".".join([self.module_name] + self.current_scope)
                 await self.storage.insert_cross_repo_import(caller, module_name, self.version)
+
+                # Resolve imports in the workspace
+                if self.root_path:
+                    # 1. Detect Nested src/ Root
+                    from pathlib import Path
+                    root_path = Path(self.root_path)
+                    search_roots = [root_path]
+                    src_folder = root_path / "src"
+                    if src_folder.exists() and src_folder.is_dir():
+                        search_roots.append(src_folder)
+
+                    # 2. Extract imported names
+                    node_text = self._node_text(node)
+                    imported_names = []
+                    if "import " in node_text:
+                        parts = node_text.split("import ")
+                        if len(parts) > 1:
+                            imports_part = parts[1]
+                            raw_imports = [imp.strip().split(" as ")[0].strip('() \n\r\t') for imp in imports_part.split(",")]
+                            imported_names = [imp for imp in raw_imports if imp]
+
+                    # 3. Try resolving the base module or each imported specifier
+                    resolved_specs = []
+                    resolved_specs.append((module_name, module_name))
+                    for name in imported_names:
+                        full_spec = f"{module_name}.{name}"
+                        resolved_specs.append((full_spec, name))
+
+                    for spec, name in resolved_specs:
+                        rel_path_str = spec.replace(".", "/")
+                        resolved_file = None
+                        for s_root in search_roots:
+                            py_file = s_root / f"{rel_path_str}.py"
+                            if py_file.exists() and py_file.is_file():
+                                resolved_file = str(py_file.resolve())
+                                break
+                            init_file = s_root / rel_path_str / "__init__.py"
+                            if init_file.exists() and init_file.is_file():
+                                resolved_file = str(init_file.resolve())
+                                break
+
+                        if resolved_file:
+                            # We resolved a workspace module to a physical file!
+                            # Insert a CALL edge representing the module import dependency!
+                            await self.storage.insert_call(self.module_name, spec, 1.0, self.version)
+
+        elif kind == "import_statement":
+            # Example: "import app.api"
+            node_text = self._node_text(node)
+            if "import " in node_text:
+                parts = node_text.split("import ")
+                if len(parts) > 1:
+                    imports_part = parts[1]
+                    raw_imports = [imp.strip().split(" as ")[0].strip('() \n\r\t') for imp in imports_part.split(",")]
+                    imported_names = [imp for imp in raw_imports if imp]
+
+                    if self.root_path:
+                        from pathlib import Path
+                        root_path = Path(self.root_path)
+                        search_roots = [root_path]
+                        src_folder = root_path / "src"
+                        if src_folder.exists() and src_folder.is_dir():
+                            search_roots.append(src_folder)
+
+                        for spec in imported_names:
+                            # Populate imports_map
+                            self.imports_map[spec] = spec
+                            if "." in spec:
+                                last_name = spec.split(".")[-1]
+                                self.imports_map[last_name] = spec
+
+                            rel_path_str = spec.replace(".", "/")
+                            resolved_file = None
+                            for s_root in search_roots:
+                                py_file = s_root / f"{rel_path_str}.py"
+                                if py_file.exists() and py_file.is_file():
+                                    resolved_file = str(py_file.resolve())
+                                    break
+                                init_file = s_root / rel_path_str / "__init__.py"
+                                if init_file.exists() and init_file.is_file():
+                                    resolved_file = str(init_file.resolve())
+                                    break
+
+                            if resolved_file:
+                                await self.storage.insert_call(self.module_name, spec, 1.0, self.version)
 
         for child in self._iter_children(node):
             await self._visit(child)

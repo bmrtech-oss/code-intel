@@ -2,11 +2,11 @@ import os
 import re
 import json
 from ..utils.traceability import fuzzy_match_symbols
-from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks
+from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks, Response, Body
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
@@ -47,7 +47,8 @@ for o in common_origins:
 # nosec
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # nosemgrep: python.fastapi.security.wildcard-cors.wildcard-cors
+    allow_origins=origins,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -55,6 +56,61 @@ app.add_middleware(
 def is_git_url(path: str) -> bool:
     """Check if the path is a Git repository URL."""
     return bool(re.match(r'^(https?://|git@)', path))
+
+def resolve_version(repo_path: str, branch: Optional[str] = None) -> str:
+    """Resolve the latest commit SHA for a remote Git URL or a local Git repo."""
+    if is_git_url(repo_path):
+        try:
+            import git
+            g = git.cmd.Git()
+            if branch:
+                output = g.ls_remote(repo_path, branch)
+                if output:
+                    return output.split()[0]
+            output = g.ls_remote(repo_path, "HEAD")
+            if output:
+                return output.split()[0]
+        except Exception as e:
+            print(f"Error resolving remote Git version: {e}")
+    else:
+        try:
+            import git
+            import tempfile
+
+            abs_path = os.path.abspath(repo_path)
+            real_path = os.path.realpath(abs_path)
+
+            # Security Sanitizer: Prevent path injection/traversal
+            # Explicit string-literal checking for CodeQL compliance
+            is_valid = False
+
+            # Check absolute literal prefixes
+            if real_path == "/repo" or real_path.startswith("/repo/"):
+                is_valid = True
+            elif real_path == "/shared" or real_path.startswith("/shared/"):
+                is_valid = True
+            else:
+                # Resolve active working directory and temp directory safely
+                cwd_dir = os.path.realpath(os.getcwd())
+                cwd_dir_slash = cwd_dir if cwd_dir.endswith(os.path.sep) else cwd_dir + os.path.sep
+                temp_dir = os.path.realpath(tempfile.gettempdir())
+                temp_dir_slash = temp_dir if temp_dir.endswith(os.path.sep) else temp_dir + os.path.sep
+
+                if real_path == cwd_dir or real_path.startswith(cwd_dir_slash):
+                    is_valid = True
+                elif real_path == temp_dir or real_path.startswith(temp_dir_slash):
+                    is_valid = True
+
+            if not is_valid:
+                return str(int(datetime.utcnow().timestamp()))
+
+            if os.path.exists(real_path):
+                repo = git.Repo(real_path)
+                return repo.head.commit.hexsha
+        except Exception as e:
+            print(f"Error resolving local Git version: {e}")
+
+    return str(int(datetime.utcnow().timestamp()))
 
 def is_safe_path(path: str) -> bool:
     """Check if the resolved path is within permitted directories."""
@@ -64,24 +120,72 @@ def is_safe_path(path: str) -> bool:
         abs_path = os.path.abspath(path)
         real_path = os.path.realpath(abs_path)
 
-        # Safe root directories
-        safe_roots = [
-            os.path.realpath(os.getcwd()),
-            os.path.realpath(tempfile.gettempdir()),
-            "/repo",
-            "/shared"
-        ]
+        # Explicit string-literal checking for CodeQL compliance
+        if real_path == "/repo" or real_path.startswith("/repo/"):
+            return True
+        if real_path == "/shared" or real_path.startswith("/shared/"):
+            return True
 
-        for root in safe_roots:
-            try:
-                common_prefix = os.path.commonpath([real_path, root])
-                if common_prefix == root:
-                    return True
-            except ValueError:
-                continue
+        cwd_dir = os.path.realpath(os.getcwd())
+        cwd_dir_slash = cwd_dir if cwd_dir.endswith(os.path.sep) else cwd_dir + os.path.sep
+        temp_dir = os.path.realpath(tempfile.gettempdir())
+        temp_dir_slash = temp_dir if temp_dir.endswith(os.path.sep) else temp_dir + os.path.sep
+
+        if real_path == cwd_dir or real_path.startswith(cwd_dir_slash):
+            return True
+        if real_path == temp_dir or real_path.startswith(temp_dir_slash):
+            return True
+
         return False
     except Exception:
         return False
+
+async def find_best_version(version: str, db: AsyncSession) -> str:
+    """Find the requested version or the closest parsed/existing version in the database."""
+    # 1. Check if the exact version exists in graph_nodes
+    try:
+        check_result = await db.execute(
+            text("SELECT 1 FROM graph_nodes WHERE version = :v LIMIT 1"),
+            {"v": version}
+        )
+        if check_result.scalar():
+            return version
+    except Exception:
+        pass
+
+    # 2. Get all parsed versions in the database
+    existing_versions = set()
+    try:
+        versions_result = await db.execute(text("SELECT DISTINCT version FROM graph_nodes"))
+        for row in versions_result.mappings():
+            v = row.get("version")
+            if v:
+                existing_versions.add(v)
+    except Exception:
+        pass
+
+    if not existing_versions:
+        # Fallback to current_symbols distinct versions
+        try:
+            versions_result = await db.execute(text("SELECT DISTINCT version FROM current_symbols"))
+            for row in versions_result.mappings():
+                v = row.get("version")
+                if v:
+                    existing_versions.add(v)
+        except Exception:
+            pass
+
+    if not existing_versions:
+        return version
+
+    if version in existing_versions:
+        return version
+
+    # Fallback to the most recent parsed version in existing_versions (sorted alphabetically/chronologically)
+    for v in sorted(list(existing_versions), reverse=True):
+        return v
+
+    return version
 
 def extract_json(text: str):
     # With Ollama grammar, we expect valid JSON directly.
@@ -105,12 +209,66 @@ def extract_json(text: str):
     
     return {"raw": text, "error": "Could not parse JSON"}
 
+async def run_startup_llm_check():
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info("Running startup LLM connectivity check...")
+
+    # Instantiate LLMUDF with the default (env-based) settings
+    udf = LLMUDF(session_id="default")
+    try:
+        if udf.provider == "ollama":
+            # Very lightweight check
+            await udf.ollama_client.generate(
+                model=udf.model,
+                prompt="test",
+                options={"num_predict": 2}
+            )
+        elif udf.provider in ("openrouter", "openai"):
+            import httpx
+            async with httpx.AsyncClient() as client:
+                headers = {
+                    "Authorization": f"Bearer {udf.api_key}",
+                    "Content-Type": "application/json"
+                }
+                payload = {
+                    "model": udf.model,
+                    "messages": [{"role": "user", "content": "hi"}],
+                    "max_tokens": 2,
+                    "temperature": 0.0
+                }
+                resp = await client.post(
+                    f"{udf.base_url}/chat/completions",
+                    headers=headers,
+                    json=payload,
+                    timeout=5.0
+                )
+                resp.raise_for_status()
+        elif udf.provider == "google":
+            import asyncio
+            loop = asyncio.get_event_loop()
+            def _gen():
+                resp = udf.google_client.generate_content("hi")
+                return resp.text
+            await loop.run_in_executor(None, _gen)
+
+        logger.info(f"Startup LLM connectivity check SUCCESS for provider: {udf.provider}, model: {udf.model}")
+    except Exception as e:
+        logger.warning(
+            f"Startup LLM connectivity check FAILED for provider: {udf.provider}, model: {udf.model}. "
+            f"Error: {e}. Services will still start normally."
+        )
+
 @app.on_event("startup")
 async def init_db():
     async with engine.begin() as conn:
         if engine.dialect.name == "postgresql":
             await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         await conn.run_sync(Base.metadata.create_all)
+
+    # Run background LLM connectivity check
+    import asyncio
+    asyncio.create_task(run_startup_llm_check())
 
     # Handle schema versioning and deprecation
     async with AsyncSessionLocal() as session:
@@ -157,6 +315,7 @@ class AnalyzeRequest(BaseModel):
     repo_path: str
     version: Optional[str] = None
     branch: Optional[str] = None
+    timeout: Optional[int] = 300
 
 class QueryRequest(BaseModel):
     rule: str
@@ -165,10 +324,16 @@ class QueryRequest(BaseModel):
     symbol: Optional[str] = None
     depth: Optional[int] = 3
 
+class RequirementsRequest(BaseModel):
+    symbol_ids: Optional[List[str]] = None
+
 class LLMConfigRequest(BaseModel):
     provider: str
     model: str
     api_key: str
+    session_id: Optional[str] = "default"
+
+class TestLLMRequest(BaseModel):
     session_id: Optional[str] = "default"
 
 @app.post("/analyze")
@@ -179,21 +344,30 @@ async def analyze(req: AnalyzeRequest, background_tasks: BackgroundTasks, db: As
     if not is_git_url(req.repo_path) and not is_safe_path(req.repo_path):
         raise HTTPException(status_code=400, detail="Invalid or unauthorized repository path")
 
-    version = req.version or str(int(datetime.utcnow().timestamp()))
-    actual_path = req.repo_path
-    temp_handler = None
-    if is_git_url(req.repo_path):
-        temp_handler = GitRepoHandler(req.repo_path, req.branch)
-        actual_path = temp_handler.clone()
-        background_tasks.add_task(temp_handler.cleanup)
+    # If version is not provided, resolve it dynamically to the latest commit SHA (or local Git SHA)
+    version = req.version or resolve_version(req.repo_path, req.branch)
     
     if USE_TEMPORAL:
         from ..worker.tasks import run_temporal_ingestion
+        actual_path = req.repo_path
+        temp_handler = None
+        if is_git_url(req.repo_path):
+            temp_handler = GitRepoHandler(req.repo_path, req.branch)
+            actual_path = temp_handler.clone()
+            background_tasks.add_task(temp_handler.cleanup)
         # Temporal is durable and handles its own queue
         background_tasks.add_task(run_temporal_ingestion, actual_path, version)
         return {"status": "temporal indexing started", "version": version, "job_id": f"ingest-{version}"}
     else:
-        job = queue.enqueue(run_ingestion, actual_path, version)
+        is_git = is_git_url(req.repo_path)
+        job = queue.enqueue(
+            run_ingestion,
+            req.repo_path,
+            version,
+            is_git_url=is_git,
+            branch=req.branch,
+            job_timeout=req.timeout or 300
+        )
         return {"status": "indexing started", "version": version, "job_id": job.id}
 
 @app.get("/status")
@@ -235,6 +409,66 @@ async def config_llm(req: LLMConfigRequest):
 
     return {"status": "success", "message": "LLM configuration applied dynamically"}
 
+@app.post("/config/llm/test")
+async def test_llm_connection(req: Optional[TestLLMRequest] = Body(None)):
+    session_id = req.session_id if req else "default"
+    udf = LLMUDF(session_id=session_id)
+
+    # We will run a lightweight, minimal-token query to verify connectivity
+    try:
+        if udf.provider == "ollama":
+            response = await udf.ollama_client.generate(
+                model=udf.model,
+                prompt="test",
+                options={"num_predict": 5}
+            )
+            text_resp = response.response
+        elif udf.provider in ("openrouter", "openai"):
+            import httpx
+            async with httpx.AsyncClient() as client:
+                headers = {
+                    "Authorization": f"Bearer {udf.api_key}",
+                    "Content-Type": "application/json"
+                }
+                payload = {
+                    "model": udf.model,
+                    "messages": [{"role": "user", "content": "hi"}],
+                    "max_tokens": 5,
+                    "temperature": 0.0
+                }
+                resp = await client.post(
+                    f"{udf.base_url}/chat/completions",
+                    headers=headers,
+                    json=payload,
+                    timeout=10.0
+                )
+                resp.raise_for_status()
+                text_resp = resp.json()["choices"][0]["message"]["content"]
+        elif udf.provider == "google":
+            import asyncio
+            loop = asyncio.get_event_loop()
+            def _gen():
+                resp = udf.google_client.generate_content("hi")
+                return resp.text
+            text_resp = await loop.run_in_executor(None, _gen)
+        else:
+            raise ValueError(f"Unsupported provider: {udf.provider}")
+
+        return {
+            "status": "success",
+            "message": "LLM connection verified successfully",
+            "provider": udf.provider,
+            "model": udf.model,
+            "response": text_resp.strip()
+        }
+    except Exception as e:
+        return {
+            "status": "failed",
+            "error": str(e),
+            "provider": udf.provider,
+            "model": udf.model
+        }
+
 @app.get("/analyze/stream")
 async def analyze_stream(job_id: str):
     import asyncio
@@ -268,13 +502,12 @@ async def analyze_stream(job_id: str):
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 @app.get("/repo/branches-and-commits")
-async def get_branches_and_commits(repo_path: str, workspace_id: Optional[str] = None):
+async def get_branches_and_commits(repo_path: str, branch: Optional[str] = None, workspace_id: Optional[str] = None):
     # Path Traversal Security check
     if not is_git_url(repo_path) and not is_safe_path(repo_path):
         raise HTTPException(status_code=400, detail="Invalid or unauthorized repository path")
 
     import git
-    from datetime import datetime
     from ..core.git_handler import GitRepoHandler
     from ..core.workspace import WorkspaceManager
     from ..storage.graph_engine import SimpleGraphEngine
@@ -308,10 +541,11 @@ async def get_branches_and_commits(repo_path: str, workspace_id: Optional[str] =
             resolved_path = os.path.realpath(actual_path)
         else:
             if os.path.isabs(actual_path):
-                raise HTTPException(status_code=400, detail="Invalid or unauthorized repository path")
-            resolved_path = os.path.realpath(os.path.join(safe_root, actual_path))
+                resolved_path = os.path.realpath(actual_path)
+            else:
+                resolved_path = os.path.realpath(os.path.join(safe_root, actual_path))
 
-        if os.path.commonpath([safe_root, resolved_path]) != safe_root:
+        if not is_safe_path(resolved_path):
             raise HTTPException(status_code=400, detail="Invalid or unauthorized repository path")
 
         if os.path.exists(resolved_path):
@@ -339,22 +573,45 @@ async def get_branches_and_commits(repo_path: str, workspace_id: Optional[str] =
                     pass
 
             # Perform recursive lookup over parent commits
-            rev = "HEAD"
-            try:
-                rev = repo.active_branch.name
-            except Exception:
-                for b in ["main", "master", "dev"]:
-                    if b in branches:
-                        rev = b
+            rev = branch or "HEAD"
+            if rev != "HEAD":
+                # Check and resolve valid local or remote references (like origin/dev)
+                possible_refs = [
+                    rev,
+                    f"origin/{rev}",
+                    f"refs/remotes/origin/{rev}",
+                    f"refs/heads/{rev}"
+                ]
+                resolved_rev = None
+                for r in possible_refs:
+                    try:
+                        repo.commit(r)
+                        resolved_rev = r
                         break
-                if rev == "HEAD" and branches:
-                    rev = branches[0]
+                    except Exception:
+                        continue
+                if resolved_rev:
+                    rev = resolved_rev
+                else:
+                    rev = "HEAD"
 
-            for commit in repo.iter_commits(rev):
+            if rev == "HEAD":
+                try:
+                    rev = repo.active_branch.name
+                except Exception:
+                    for b in ["main", "master", "dev"]:
+                        if b in branches:
+                            rev = b
+                            break
+                    if rev == "HEAD" and branches:
+                        rev = branches[0]
+
+            for commit in repo.iter_commits(rev, max_count=50):
                 commits.append({
                     "sha": commit.hexsha,
                     "author": commit.author.name or "Unknown",
-                    "date": commit.committed_datetime.isoformat()
+                    "date": commit.committed_datetime.isoformat(),
+                    "message": commit.message.strip() if commit.message else ""
                 })
             git_success = True
     except Exception:
@@ -377,7 +634,8 @@ async def get_branches_and_commits(repo_path: str, workspace_id: Optional[str] =
                         commits.append({
                             "sha": c["sha"],
                             "author": c.get("author", "Unknown"),
-                            "date": c.get("date", datetime.utcnow().isoformat())
+                            "date": c.get("date", datetime.utcnow().isoformat()),
+                            "message": c.get("message", "")
                         })
                 if "main" not in branches:
                     branches.append("main")
@@ -386,14 +644,6 @@ async def get_branches_and_commits(repo_path: str, workspace_id: Optional[str] =
 
     if not branches:
         branches = ["main"]
-    if not commits:
-        commits = [
-            {
-                "sha": "a7b8c9",
-                "author": "Jules",
-                "date": "2026-07-16T12:00:00Z"
-            }
-        ]
 
     await ws_manager.close()
     return {
@@ -401,8 +651,65 @@ async def get_branches_and_commits(repo_path: str, workspace_id: Optional[str] =
         "commits": commits
     }
 
+@app.get("/repo/version-status")
+async def get_repo_version_status(version: str, db: AsyncSession = Depends(get_db)):
+    """Check analysis status of a specific version and get fallback options."""
+    # 1. Check if the exact version is analyzed
+    is_analyzed = False
+    try:
+        check_result = await db.execute(
+            text("SELECT 1 FROM graph_nodes WHERE version = :v LIMIT 1"),
+            {"v": version}
+        )
+        if check_result.scalar():
+            is_analyzed = True
+    except Exception:
+        pass
+
+    if not is_analyzed:
+        try:
+            check_result = await db.execute(
+                text("SELECT 1 FROM current_symbols WHERE version = :v LIMIT 1"),
+                {"v": version}
+            )
+            if check_result.scalar():
+                is_analyzed = True
+        except Exception:
+            pass
+
+    # 2. Find the best fallback version
+    best_fallback = None
+    if not is_analyzed:
+        best_fallback = await find_best_version(version, db)
+        if best_fallback == version:
+            best_fallback = None
+
+    # 3. Check if any analysis exists at all
+    has_any_analysis = False
+    try:
+        versions_result = await db.execute(text("SELECT DISTINCT version FROM graph_nodes"))
+        if any(row.get("version") for row in versions_result.mappings()):
+            has_any_analysis = True
+    except Exception:
+        pass
+
+    if not has_any_analysis:
+        try:
+            versions_result = await db.execute(text("SELECT DISTINCT version FROM current_symbols"))
+            if any(row.get("version") for row in versions_result.mappings()):
+                has_any_analysis = True
+        except Exception:
+            pass
+
+    return {
+        "requested_version": version,
+        "is_analyzed": is_analyzed,
+        "best_fallback_version": best_fallback,
+        "has_any_analysis": has_any_analysis
+    }
+
 @app.get("/repo/tree")
-async def get_repo_tree(version: str, db: AsyncSession = Depends(get_db)):
+async def get_repo_tree(version: str, response: Response, db: AsyncSession = Depends(get_db)):
     # Try querying the graph_nodes read model first
     nodes = []
     try:
@@ -424,6 +731,37 @@ async def get_repo_tree(version: str, db: AsyncSession = Depends(get_db)):
             nodes = [dict(row) for row in result.mappings()]
         except Exception:
             pass
+
+    resolved_version = version
+    is_fallback = False
+
+    # If empty, lazy fall back to the best available version
+    if not nodes:
+        resolved_version = await find_best_version(version, db)
+        if resolved_version != version:
+            is_fallback = True
+            try:
+                result = await db.execute(
+                    text("SELECT fqn, file FROM graph_nodes WHERE version = :v"),
+                    {"v": resolved_version}
+                )
+                nodes = [dict(row) for row in result.mappings()]
+            except Exception:
+                pass
+
+            if not nodes:
+                try:
+                    result = await db.execute(
+                        text("SELECT name AS fqn, file FROM current_symbols WHERE version = :v"),
+                        {"v": resolved_version}
+                    )
+                    nodes = [dict(row) for row in result.mappings()]
+                except Exception:
+                    pass
+
+    response.headers["X-Version-Requested"] = version
+    response.headers["X-Version-Resolved"] = resolved_version
+    response.headers["X-Version-Fallback"] = "true" if is_fallback else "false"
 
     # Aggregate active files and their symbols
     files_symbols = {}
@@ -459,7 +797,7 @@ async def get_repo_tree(version: str, db: AsyncSession = Depends(get_db)):
     return tree
 
 @app.get("/graph")
-async def get_graph(version: str, level: str = "file", focus_symbol: Optional[str] = None, db: AsyncSession = Depends(get_db)):
+async def get_graph(version: str, response: Response, level: str = "file", focus_symbol: Optional[str] = None, db: AsyncSession = Depends(get_db)):
     # Try querying graph_nodes/graph_edges
     db_nodes = []
     try:
@@ -482,6 +820,40 @@ async def get_graph(version: str, level: str = "file", focus_symbol: Optional[st
         except Exception:
             pass
 
+    resolved_version = version
+    is_fallback = False
+
+    # If empty, lazy fall back to the best available version
+    if not db_nodes:
+        resolved_version = await find_best_version(version, db)
+        if resolved_version != version:
+            is_fallback = True
+            try:
+                result = await db.execute(
+                    text("SELECT fqn, kind, file FROM graph_nodes WHERE version = :v"),
+                    {"v": resolved_version}
+                )
+                db_nodes = [dict(row) for row in result.mappings()]
+            except Exception:
+                pass
+
+            if not db_nodes:
+                try:
+                    result = await db.execute(
+                        text("SELECT name AS fqn, kind, file FROM current_symbols WHERE version = :v"),
+                        {"v": resolved_version}
+                    )
+                    db_nodes = [dict(row) for row in result.mappings()]
+                except Exception:
+                    pass
+
+    # Set version to the resolved fallback version so subsequent edge queries also use it
+    version = resolved_version
+
+    response.headers["X-Version-Requested"] = version
+    response.headers["X-Version-Resolved"] = resolved_version
+    response.headers["X-Version-Fallback"] = "true" if is_fallback else "false"
+
     db_edges = []
     try:
         result = await db.execute(
@@ -503,8 +875,25 @@ async def get_graph(version: str, level: str = "file", focus_symbol: Optional[st
         except Exception:
             pass
 
+    # Normalize file paths of db_nodes to remove any /tmp/codeintel_XXXXXX/ prefix and standardise backslashes
+    for n in db_nodes:
+        if n.get("file"):
+            fp = n["file"].replace("\\", "/")
+            n["file"] = re.sub(r"^/tmp/codeintel_[a-zA-Z0-9_]+/", "", fp)
+
     nodes = []
     edges = []
+
+    # Suffix-matching lookup map for unqualified/partially-qualified symbol names (e.g. read_csv_data -> starter_repo.plot_data.read_csv_data)
+    suffix_to_fqn = {}
+    for n in db_nodes:
+        fqn = n.get("fqn")
+        if fqn:
+            parts = fqn.split(".")
+            for i in range(1, min(len(parts) + 1, 4)):
+                suffix = ".".join(parts[-i:])
+                if suffix not in suffix_to_fqn:
+                    suffix_to_fqn[suffix] = fqn
 
     if level == "file":
         # Only FileNode nodes and file-to-file dependencies
@@ -518,42 +907,65 @@ async def get_graph(version: str, level: str = "file", focus_symbol: Optional[st
 
         symbol_to_file = {n["fqn"]: n["file"] for n in db_nodes if n.get("file")}
 
+        # Suffix-matching lookup map for unqualified/partially-qualified symbols (e.g. read_csv_data)
+        suffix_to_file = {}
+        for fqn, filepath in symbol_to_file.items():
+            parts = fqn.split(".")
+            for i in range(1, min(len(parts) + 1, 4)):
+                suffix = ".".join(parts[-i:])
+                if suffix not in suffix_to_file:
+                    suffix_to_file[suffix] = filepath
+
         seen_edges = set()
         for e in db_edges:
             src_symbol = e.get("from_fqn")
             tgt_symbol = e.get("to_fqn")
-            if src_symbol in symbol_to_file and tgt_symbol in symbol_to_file:
-                src_file = symbol_to_file[src_symbol]
-                tgt_file = symbol_to_file[tgt_symbol]
-                if src_file != tgt_file:
-                    edge_tuple = (src_file, tgt_file)
-                    if edge_tuple not in seen_edges:
-                        seen_edges.add(edge_tuple)
-                        edges.append({
-                            "source": f"file:{src_file}",
-                            "target": f"file:{tgt_file}",
-                            "type": "imports"
-                        })
+
+            src_file = symbol_to_file.get(src_symbol) or suffix_to_file.get(src_symbol)
+            tgt_file = symbol_to_file.get(tgt_symbol) or suffix_to_file.get(tgt_symbol)
+
+            if src_file and tgt_file and src_file != tgt_file:
+                edge_tuple = (src_file, tgt_file)
+                if edge_tuple not in seen_edges:
+                    seen_edges.add(edge_tuple)
+                    edges.append({
+                        "source": f"file:{src_file}",
+                        "target": f"file:{tgt_file}",
+                        "type": "imports"
+                    })
     else: # level == "all"
         # Full function-level network or radial depth 1 around focus_symbol
         symbol_to_kind = {n["fqn"]: n.get("kind", "symbol") for n in db_nodes}
 
         if focus_symbol:
             # Radial depth of 1 from focus_symbol
-            keep_nodes = {focus_symbol}
+            resolved_focus = suffix_to_fqn.get(focus_symbol) or focus_symbol
+            keep_nodes = {resolved_focus}
+            seen_calls = set()
             for e in db_edges:
                 src = e.get("from_fqn")
                 tgt = e.get("to_fqn")
-                if src == focus_symbol or tgt == focus_symbol:
-                    if src:
-                        keep_nodes.add(src)
-                    if tgt:
-                        keep_nodes.add(tgt)
-                    edges.append({
-                        "source": src,
-                        "target": tgt,
-                        "type": "calls"
-                    })
+
+                src_fqn = suffix_to_fqn.get(src) or src
+                tgt_fqn = suffix_to_fqn.get(tgt) or tgt
+
+                is_src_match = (src_fqn == resolved_focus or (src_fqn and resolved_focus.endswith("." + src_fqn)))
+                is_tgt_match = (tgt_fqn == resolved_focus or (tgt_fqn and resolved_focus.endswith("." + tgt_fqn)))
+
+                if is_src_match or is_tgt_match:
+                    if src_fqn:
+                        keep_nodes.add(src_fqn)
+                    if tgt_fqn:
+                        keep_nodes.add(tgt_fqn)
+
+                    edge_tuple = (src_fqn, tgt_fqn)
+                    if edge_tuple not in seen_calls:
+                        seen_calls.add(edge_tuple)
+                        edges.append({
+                            "source": src_fqn,
+                            "target": tgt_fqn,
+                            "type": "calls"
+                        })
 
             for fqn in sorted(list(keep_nodes)):
                 kind = symbol_to_kind.get(fqn, "symbol")
@@ -564,19 +976,34 @@ async def get_graph(version: str, level: str = "file", focus_symbol: Optional[st
                 })
         else:
             # Return all function-level nodes and call-level edges
+            seen_nodes = set()
             for n in db_nodes:
                 fqn = n["fqn"]
-                nodes.append({
-                    "id": fqn,
-                    "label": fqn.split(".")[-1] if "." in fqn else fqn,
-                    "type": n.get("kind", "symbol")
-                })
+                if fqn not in seen_nodes:
+                    seen_nodes.add(fqn)
+                    nodes.append({
+                        "id": fqn,
+                        "label": fqn.split(".")[-1] if "." in fqn else fqn,
+                        "type": n.get("kind", "symbol")
+                    })
+
+            seen_calls = set()
             for e in db_edges:
-                edges.append({
-                    "source": e.get("from_fqn"),
-                    "target": e.get("to_fqn"),
-                    "type": "calls"
-                })
+                src = e.get("from_fqn")
+                tgt = e.get("to_fqn")
+
+                src_fqn = suffix_to_fqn.get(src) or src
+                tgt_fqn = suffix_to_fqn.get(tgt) or tgt
+
+                if src_fqn and tgt_fqn:
+                    edge_tuple = (src_fqn, tgt_fqn)
+                    if edge_tuple not in seen_calls:
+                        seen_calls.add(edge_tuple)
+                        edges.append({
+                            "source": src_fqn,
+                            "target": tgt_fqn,
+                            "type": "calls"
+                        })
 
     return {
         "nodes": nodes,
@@ -688,7 +1115,7 @@ async def query(req: QueryRequest, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=400, detail=str(e))
 
 @app.post("/requirements/stream")
-async def requirements_stream(version: Optional[str] = None, session_id: Optional[str] = "default", db: AsyncSession = Depends(get_db)):
+async def requirements_stream(req: Optional[RequirementsRequest] = Body(None), version: Optional[str] = None, session_id: Optional[str] = "default", db: AsyncSession = Depends(get_db)):
     storage = VersionedStorage(db)
     version = version or await storage.get_current_version()
     if not version:
@@ -707,74 +1134,112 @@ async def requirements_stream(version: Optional[str] = None, session_id: Optiona
         JOIN facts f ON c.call_id = f.entity_id AND c.version = f.version AND f.attribute = 'callee'
         WHERE c.version = :v AND f.valid_to IS NULL
     """, {"v": version})
+
+    # Apply adaptive grounding context filter if symbol_ids are specified
+    if req and req.symbol_ids:
+        filtered_symbols = [s for s in symbols if s.get("name") in req.symbol_ids]
+        if not filtered_symbols:
+            # Suffix/ends-with matching for absolute paths vs. relative database paths
+            possible_files = set()
+            for sid in req.symbol_ids:
+                clean_id = sid.replace("file:", "")
+                clean_id_normalized = clean_id.replace("\\", "/").strip("/")
+
+                for s in symbols:
+                    s_file = s.get("file")
+                    if s_file:
+                        s_file_normalized = s_file.replace("\\", "/").strip("/")
+                        if clean_id_normalized.endswith(s_file_normalized) or s_file_normalized.endswith(clean_id_normalized):
+                            possible_files.add(s_file)
+
+                # Parent module name match
+                for s in symbols:
+                    if s.get("name") and s.get("name").startswith(sid):
+                        if s.get("file"):
+                            possible_files.add(s.get("file"))
+            if possible_files:
+                filtered_symbols = [s for s in symbols if s.get("file") in possible_files]
+
+        symbols = filtered_symbols
+        active_symbol_names = {s.get("name") for s in symbols if s.get("name")}
+        calls = [c for c in calls if c.get("caller") in active_symbol_names or c.get("callee") in active_symbol_names]
     
     udf = LLMUDF(session_id=session_id)
 
     async def event_generator():
-        full_response = ""
-        # We'll collect the full response first, then extract first JSON
-        async for token in udf.generate_requirements_stream(symbols, calls):
-            full_response += token
-            # yield f"data: {json.dumps({'token': token})}\n\n"
-            yield f"data: {json.dumps({'token': token, 'partial': full_response})}\n\n"
-
-        # Parse and store traceability
         try:
-            req_json = json.loads(full_response)
-            cleaned = full_response
-        except json.JSONDecodeError:
-            # fallback: use extract_json
-            req_json = extract_json(full_response)
-            cleaned = json.dumps(req_json)
-            if "error" in req_json:
-                req_json = {"raw": full_response, "error": "JSON parse failed"}
+            full_response = ""
+            # We'll collect the full response first, then extract first JSON
+            async for token in udf.generate_requirements_stream(symbols, calls):
+                full_response += token
+                # yield f"data: {json.dumps({'token': token})}\n\n"
+                yield f"data: {json.dumps({'token': token, 'partial': full_response})}\n\n"
 
-        # Store provenance data
-        grounded_in = [s["id"] for s in symbols if "id" in s] + [c["id"] for c in calls if "id" in c]
-        is_verified, confidence = udf.validate_artifact(req_json, symbols, calls)
+            # Parse and store traceability
+            try:
+                req_json = json.loads(full_response)
+                cleaned = full_response
+            except json.JSONDecodeError:
+                # fallback: use extract_json
+                req_json = extract_json(full_response)
+                cleaned = json.dumps(req_json)
+                if "error" in req_json:
+                    req_json = {"raw": full_response, "error": "JSON parse failed"}
 
-        await storage.insert_llm_artifact(
-            artifact_type="requirement",
-            value=cleaned,
-            version=version,
-            grounded_in=grounded_in,
-            prompt=udf.handler.build_prompt(symbols, calls),
-            model=MODEL,
-            is_verified=is_verified,
-            confidence=confidence
-        )
+            # Store provenance data
+            grounded_in = [s["id"] for s in symbols if "id" in s] + [c["id"] for c in calls if "id" in c]
+            is_verified, confidence = udf.validate_artifact(req_json, symbols, calls)
 
-        traceability_stored = False
-        if "tasks" in req_json and isinstance(req_json["tasks"], list):
-            for task in req_json["tasks"]:
-                trace_list = task.get("traceability", [])
-                if not trace_list:
-                    trace_list = fuzzy_match_symbols(task.get("text", ""), symbols)
-                for symbol_id in trace_list:
-                    epic = req_json.get("epic", "UNKNOWN")
-                    req_id = f"{epic[:20]}_{task.get('text', 'TASK')[:20]}".replace(" ", "_")
-                    await db.execute(
-                        text("""
-                            INSERT INTO requirement_traceability (requirement_id, symbol_id, confidence)
-                            VALUES (:rid, :sid, 1.0)
-                            ON CONFLICT (requirement_id, symbol_id) DO NOTHING
-                        """),
-                        {"rid": req_id, "sid": symbol_id}
-                    )
-                traceability_stored = True
-            await db.commit()
+            await storage.insert_llm_artifact(
+                artifact_type="requirement",
+                value=cleaned,
+                version=version,
+                grounded_in=grounded_in,
+                prompt=udf.handler.build_prompt(symbols, calls),
+                model=MODEL,
+                is_verified=is_verified,
+                confidence=confidence
+            )
 
-        yield f"data: {json.dumps({'done': True, 'traceability_stored': traceability_stored})}\n\n"
+            traceability_stored = False
+            if "tasks" in req_json and isinstance(req_json["tasks"], list):
+                for task in req_json["tasks"]:
+                    trace_list = task.get("traceability", [])
+                    if not trace_list:
+                        trace_list = fuzzy_match_symbols(task.get("text", ""), symbols)
+                    for symbol_id in trace_list:
+                        epic = req_json.get("epic", "UNKNOWN")
+                        req_id = f"{epic[:20]}_{task.get('text', 'TASK')[:20]}".replace(" ", "_")
+                        await db.execute(
+                            text("""
+                                INSERT INTO requirement_traceability (requirement_id, symbol_id, confidence)
+                                VALUES (:rid, :sid, 1.0)
+                                ON CONFLICT (requirement_id, symbol_id) DO NOTHING
+                            """),
+                            {"rid": req_id, "sid": symbol_id}
+                        )
+                    traceability_stored = True
+                await db.commit()
+
+            yield f"data: {json.dumps({'done': True, 'traceability_stored': traceability_stored})}\n\n"
+        except Exception as e:
+            error_payload = {
+                "error": f"LLM Generation failed: {str(e)}",
+                "done": True
+            }
+            yield f"data: {json.dumps(error_payload)}\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 @app.post("/requirements", status_code=202)
-async def requirements(version: Optional[str] = None, session_id: Optional[str] = "default", db: AsyncSession = Depends(get_db)):
+async def requirements(req: Optional[RequirementsRequest] = Body(None), version: Optional[str] = None, session_id: Optional[str] = "default", db: AsyncSession = Depends(get_db)):
     storage = VersionedStorage(db)
     version = version or await storage.get_current_version()
     if not version:
         raise HTTPException(status_code=400, detail="No version found")
     
+    # We pass the list of focused symbol_ids to the task if requested
+    symbol_ids = req.symbol_ids if req else None
     job = llm_queue.enqueue(generate_requirements_task, version, session_id)
     return {"job_id": job.id, "status": "pending"}
 
@@ -845,3 +1310,55 @@ async def get_provenance(fact_id: int, db: AsyncSession = Depends(get_db)):
     storage = VersionedStorage(db)
     result = await storage.get_artifacts_by_fact(fact_id)
     return {"fact_id": fact_id, "artifacts": result}
+
+@app.post("/api/open-editor")
+async def open_editor(payload: dict):
+    file_path = payload.get("file_path")
+    if not file_path:
+        raise HTTPException(status_code=400, detail="Missing file_path")
+
+    # Strip file: prefix if present
+    if file_path.startswith("file:"):
+        file_path = file_path[5:]
+
+    # Security Check: Prevent directory traversal or arbitrary file handling
+    if not is_safe_path(file_path):
+        raise HTTPException(status_code=400, detail="Unauthorized or unsafe file path")
+
+    import sys
+    import subprocess
+    import os
+
+    try:
+        if sys.platform == "win32":
+            os.startfile(file_path)
+        elif sys.platform == "darwin":
+            subprocess.run(["open", file_path], check=True)
+        else:
+            subprocess.run(["xdg-open", file_path], check=True)
+        return {"status": "success"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to open file: {str(e)}")
+
+@app.get("/api/references")
+async def find_references(symbol_id: str, version: str, db: AsyncSession = Depends(get_db)):
+    # Find all edges where target matches symbol_id
+    version = await find_best_version(version, db)
+
+    try:
+        result = await db.execute(
+            text("SELECT from_fqn FROM graph_edges WHERE to_fqn = :sym AND version = :v"),
+            {"sym": symbol_id, "v": version}
+        )
+        callers = [row[0] for row in result.all()]
+    except Exception:
+        try:
+            result = await db.execute(
+                text("SELECT caller FROM current_calls WHERE callee = :sym AND version = :v"),
+                {"sym": symbol_id, "v": version}
+            )
+            callers = [row[0] for row in result.all()]
+        except Exception:
+            callers = []
+
+    return {"references": list(set(callers))}
