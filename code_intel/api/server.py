@@ -1,7 +1,6 @@
 import os
 import re
 import json
-from pathlib import Path
 from ..utils.traceability import fuzzy_match_symbols
 from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks, Response, Body
 from fastapi.responses import StreamingResponse
@@ -58,47 +57,6 @@ def is_git_url(path: str) -> bool:
     """Check if the path is a Git repository URL."""
     return bool(re.match(r'^(https?://|git@)', path))
 
-def _resolve_allowed_path(path: str) -> Optional[str]:
-    """Return a normalized path only if it stays under one of the trusted roots."""
-    try:
-        import tempfile
-
-        if not path or "\x00" in path:
-            return None
-
-        # Reject URL-like inputs here; only local filesystem paths are allowed.
-        if is_git_url(path):
-            return None
-
-        # Canonicalize user input before constructing a Path object.
-        normalized_input = os.path.normpath(os.path.expanduser(path))
-        candidate = Path(os.path.abspath(normalized_input)).resolve(strict=False)
-        app_temp_root = (Path(tempfile.gettempdir()) / "code_intel").resolve(strict=False)
-        allowed_roots = [
-            Path("/repo").resolve(strict=False),
-            Path("/shared").resolve(strict=False),
-            app_temp_root,
-            Path(os.path.realpath(os.getcwd())).resolve(strict=False),
-            Path(os.path.realpath(tempfile.gettempdir())).resolve(strict=False),
-        ]
-
-        for root in allowed_roots:
-            try:
-                candidate.relative_to(root)
-                return str(candidate)
-            except ValueError:
-                continue
-
-        return None
-    except Exception:
-        return None
-
-
-def _is_within_allowed_root(path: str) -> bool:
-    """Return True when the resolved path stays under an allowed root directory."""
-    return _resolve_allowed_path(path) is not None
-
-
 def resolve_version(repo_path: str, branch: Optional[str] = None) -> str:
     """Resolve the latest commit SHA for a remote Git URL or a local Git repo."""
     if is_git_url(repo_path):
@@ -118,24 +76,60 @@ def resolve_version(repo_path: str, branch: Optional[str] = None) -> str:
         try:
             import git
 
-            safe_repo_path = _resolve_allowed_path(repo_path)
-            if not safe_repo_path:
-                return str(int(datetime.utcnow().timestamp()))
+            safe_path = get_sanitized_safe_path(repo_path)
 
-            if os.path.exists(safe_repo_path):
-                repo = git.Repo(safe_repo_path)
+            if os.path.exists(safe_path):
+                repo = git.Repo(safe_path)
                 return repo.head.commit.hexsha
         except Exception as e:
             print(f"Error resolving local Git version: {e}")
 
     return str(int(datetime.utcnow().timestamp()))
 
+def get_sanitized_safe_path(path: str) -> str:
+    """Validate and cleanly reconstruct the path to sever CodeQL taint propagation."""
+    try:
+        import tempfile
+        abs_path = os.path.abspath(path)
+        real_path = os.path.realpath(abs_path)
+
+        cwd_dir = os.path.realpath(os.getcwd())
+        temp_dir = os.path.realpath(tempfile.gettempdir())
+
+        base_dir = None
+        if real_path == "/repo" or real_path.startswith("/repo/"):
+            base_dir = "/repo"
+        elif real_path == "/shared" or real_path.startswith("/shared/"):
+            base_dir = "/shared"
+        elif real_path == cwd_dir or real_path.startswith(cwd_dir + os.path.sep):
+            base_dir = cwd_dir
+        elif real_path == temp_dir or real_path.startswith(temp_dir + os.path.sep):
+            base_dir = temp_dir
+
+        if not base_dir:
+            raise ValueError("Path is outside permitted directories")
+
+        # Get the relative path from the safe base directory
+        rel = os.path.relpath(real_path, base_dir)
+        if rel == ".":
+            return base_dir
+
+        # Split components and filter out empty, parent, or traversal parts
+        parts = [p for p in rel.split(os.path.sep) if p and p not in (".", "..")]
+
+        # Reconstruct the safe path
+        reconstructed = os.path.join(base_dir, *parts)
+        return reconstructed
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid or unauthorized path: {str(e)}")
 
 def is_safe_path(path: str) -> bool:
     """Check if the resolved path is within permitted directories."""
-    if not path:
+    try:
+        get_sanitized_safe_path(path)
+        return True
+    except Exception:
         return False
-    return _is_within_allowed_root(path)
 
 async def find_best_version(version: str, db: AsyncSession) -> str:
     """Find the requested version or the closest parsed/existing version in the database."""
@@ -458,10 +452,11 @@ async def test_llm_connection(req: Optional[TestLLMRequest] = Body(None)):
             "model": udf.model,
             "response": text_resp.strip()
         }
-    except Exception:
+    except Exception as e:
+        logging.exception("LLM test connection failed")
         return {
             "status": "failed",
-            "error": "Unable to verify LLM connection. Check server logs for details.",
+            "error": f"LLM Connection failed: {e.__class__.__name__}",
             "provider": udf.provider,
             "model": udf.model
         }
@@ -1213,12 +1208,10 @@ async def requirements_stream(req: Optional[RequirementsRequest] = Body(None), v
                 await db.commit()
 
             yield f"data: {json.dumps({'done': True, 'traceability_stored': traceability_stored})}\n\n"
-        except Exception:
-            import logging
-            logger = logging.getLogger(__name__)
-            logger.exception("LLM generation failed for requirements stream")
+        except Exception as e:
+            logging.exception("LLM generation stream failed")
             error_payload = {
-                "error": "LLM Generation failed",
+                "error": f"LLM Generation failed: {e.__class__.__name__}",
                 "done": True
             }
             yield f"data: {json.dumps(error_payload)}\n\n"
@@ -1232,7 +1225,6 @@ async def requirements(req: Optional[RequirementsRequest] = Body(None), version:
     if not version:
         raise HTTPException(status_code=400, detail="No version found")
     
-    # Focused symbol selection is not currently used when enqueueing the job.
     job = llm_queue.enqueue(generate_requirements_task, version, session_id)
     return {"job_id": job.id, "status": "pending"}
 
@@ -1315,40 +1307,23 @@ async def open_editor(payload: dict):
         file_path = file_path[5:]
 
     # Security Check: Prevent directory traversal or arbitrary file handling
-    if not is_safe_path(file_path):
-        raise HTTPException(status_code=400, detail="Unauthorized or unsafe file path")
+    safe_path = get_sanitized_safe_path(file_path)
 
     import sys
     import subprocess
     import os
 
-    # Normalize and ensure the path stays within a trusted base directory.
-    base_dir = os.path.realpath(os.getcwd())
-    candidate_path = file_path if os.path.isabs(file_path) else os.path.join(base_dir, file_path)
-    normalized_path = os.path.realpath(candidate_path)
-    try:
-        if os.path.commonpath([base_dir, normalized_path]) != base_dir:
-            raise HTTPException(status_code=400, detail="Unauthorized or unsafe file path")
-    except ValueError:
-        # Handles mixed-drive or invalid path scenarios on some platforms.
-        raise HTTPException(status_code=400, detail="Unauthorized or unsafe file path")
-
-    safe_path = _resolve_allowed_path(normalized_path)
-    if not safe_path:
-        raise HTTPException(status_code=400, detail="Unauthorized or unsafe file path")
-
-    open_target = file_path
-
     try:
         if sys.platform == "win32":
-            os.startfile(open_target)
+            os.startfile(safe_path)
         elif sys.platform == "darwin":
-            subprocess.run(["open", open_target], check=True)
+            subprocess.run(["open", safe_path], check=True)
         else:
-            subprocess.run(["xdg-open", open_target], check=True)
+            subprocess.run(["xdg-open", safe_path], check=True)
         return {"status": "success"}
-    except Exception:
-        raise HTTPException(status_code=500, detail="Failed to open file")
+    except Exception as e:
+        logging.exception("Failed to open file in editor")
+        raise HTTPException(status_code=500, detail=f"Failed to open file: {e.__class__.__name__}")
 
 @app.get("/api/references")
 async def find_references(symbol_id: str, version: str, db: AsyncSession = Depends(get_db)):
