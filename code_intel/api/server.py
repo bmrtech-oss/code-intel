@@ -1334,14 +1334,28 @@ async def open_editor(payload: dict):
     abs_path = os.path.abspath(file_path)
     real_path = os.path.realpath(abs_path)
 
-    # Direct string-literal prefix checking for CodeQL path traversal sanitization
-    cwd_dir = os.path.realpath(os.getcwd())
-    cwd_dir_slash = cwd_dir if cwd_dir.endswith(os.path.sep) else cwd_dir + os.path.sep
-    temp_dir = os.path.realpath(tempfile.gettempdir())
-    temp_dir_slash = temp_dir if temp_dir.endswith(os.path.sep) else temp_dir + os.path.sep
+    # Canonical allowlist roots; validate by path containment (not string prefix)
+    allowed_roots = [
+        os.path.realpath("/repo"),
+        os.path.realpath("/shared"),
+        os.path.realpath(os.getcwd()),
+        os.path.realpath(tempfile.gettempdir()),
+    ]
 
-    if not (real_path.startswith("/repo/") or real_path.startswith("/shared/") or real_path.startswith(cwd_dir_slash) or real_path.startswith(temp_dir_slash) or real_path == "/repo" or real_path == "/shared"):
+    is_allowed = False
+    for root in allowed_roots:
+        try:
+            if os.path.commonpath([real_path, root]) == root:
+                is_allowed = True
+                break
+        except ValueError:
+            continue
+
+    if not is_allowed:
         raise PermissionError("Unauthorized or unsafe file path")
+
+    if not os.path.isfile(real_path):
+        raise HTTPException(status_code=400, detail="Path must be an existing file")
 
     import sys
     import subprocess
