@@ -22,10 +22,12 @@ from ..settings import ALLOWED_ORIGINS
 
 from .routes.graph import router as graph_router
 from .routes.repo import router as repo_router
+from .routes.extraction import router as extraction_router
 
 app = FastAPI(title="Code Intelligence Platform (Prod)", version="1.0.0")
 app.include_router(graph_router, prefix="/api/graph")
 app.include_router(repo_router, prefix="/api/repo")
+app.include_router(extraction_router, prefix="/api/extract")
 
 @app.exception_handler(PermissionError)
 async def permission_error_handler(request: Request, exc: PermissionError):
