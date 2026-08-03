@@ -1,9 +1,11 @@
+from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 from typing import Dict, Any
+from code_intel.core.storage import get_db
 
 class GraphService:
-    def __init__(self, db: AsyncSession):
+    def __init__(self, db: AsyncSession = Depends(get_db)):
         self.db = db
 
     async def get_graph_at_commit(self, repo_id: str, commit_sha: str) -> Dict[str, Any]:

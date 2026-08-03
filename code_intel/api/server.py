@@ -21,9 +21,11 @@ from ..worker.tasks import queue, llm_queue, run_ingestion, generate_requirement
 from ..settings import ALLOWED_ORIGINS
 
 from .routes.graph import router as graph_router
+from .routes.repo import router as repo_router
 
 app = FastAPI(title="Code Intelligence Platform (Prod)", version="1.0.0")
-app.include_router(graph_router)
+app.include_router(graph_router, prefix="/api/graph")
+app.include_router(repo_router, prefix="/api/repo")
 
 @app.exception_handler(PermissionError)
 async def permission_error_handler(request: Request, exc: PermissionError):
