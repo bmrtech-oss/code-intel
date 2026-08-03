@@ -461,10 +461,10 @@ async def test_llm_connection(req: Optional[TestLLMRequest] = Body(None)):
             "model": udf.model,
             "response": text_resp.strip()
         }
-    except Exception as e:
+    except Exception:
         return {
             "status": "failed",
-            "error": str(e),
+            "error": "Unable to verify LLM connection. Check server logs for details.",
             "provider": udf.provider,
             "model": udf.model
         }
