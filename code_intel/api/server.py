@@ -1232,8 +1232,7 @@ async def requirements(req: Optional[RequirementsRequest] = Body(None), version:
     if not version:
         raise HTTPException(status_code=400, detail="No version found")
     
-    # We pass the list of focused symbol_ids to the task if requested
-    symbol_ids = req.symbol_ids if req else None
+    # Focused symbol selection is not currently used when enqueueing the job.
     job = llm_queue.enqueue(generate_requirements_task, version, session_id)
     return {"job_id": job.id, "status": "pending"}
 

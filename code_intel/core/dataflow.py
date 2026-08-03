@@ -172,7 +172,7 @@ class LocalGraphEngine(BaseGraphEngine):
             if db_dir:
                 os.makedirs(db_dir, exist_ok=True)
             # Verify extension loading succeeds once
-            g_verify = graphqlite.Graph(GRAPHQLITE_DB_PATH)
+            graphqlite.Graph(GRAPHQLITE_DB_PATH)
         except Exception as e:
             raise RuntimeError(
                 f"Failed to initialize GraphQLite Graph at {GRAPHQLITE_DB_PATH or 'None'}: {e}. "
