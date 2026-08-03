@@ -63,17 +63,23 @@ def _resolve_allowed_path(path: str) -> Optional[str]:
     try:
         import tempfile
 
-        candidate = Path(os.path.abspath(path)).resolve(strict=False)
+        if not path or "\x00" in path:
+            return None
+
         allowed_roots = [
-            Path(os.path.realpath("/repo")),
-            Path(os.path.realpath("/shared")),
-            Path(os.path.realpath(os.getcwd())),
-            Path(os.path.realpath(tempfile.gettempdir())),
+            Path(os.path.realpath("/repo")).resolve(strict=False),
+            Path(os.path.realpath("/shared")).resolve(strict=False),
+            Path(os.path.realpath(os.getcwd())).resolve(strict=False),
+            Path(os.path.realpath(tempfile.gettempdir())).resolve(strict=False),
         ]
+
+        # Treat user input as relative to an allowed root to prevent absolute-path bypass.
+        relative_input = str(path).lstrip("/\\")
 
         for root in allowed_roots:
             try:
-                candidate.relative_to(root.resolve(strict=False))
+                candidate = (root / relative_input).resolve(strict=False)
+                candidate.relative_to(root)
                 return str(candidate)
             except ValueError:
                 continue
