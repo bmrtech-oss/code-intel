@@ -1324,8 +1324,8 @@ async def open_editor(payload: dict):
     import os
 
     # Normalize and ensure the path stays within a trusted base directory.
-    base_dir = os.path.abspath(os.getcwd())
-    normalized_path = os.path.abspath(file_path)
+    base_dir = os.path.realpath(os.getcwd())
+    normalized_path = os.path.realpath(file_path)
     try:
         if os.path.commonpath([base_dir, normalized_path]) != base_dir:
             raise HTTPException(status_code=400, detail="Unauthorized or unsafe file path")
