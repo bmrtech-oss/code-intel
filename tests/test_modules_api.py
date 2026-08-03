@@ -1,7 +1,6 @@
 import os
 import pytest
 import importlib
-from unittest.mock import patch, MagicMock, AsyncMock
 from fastapi.testclient import TestClient
 from code_intel.api.server import app
 from code_intel.core.storage import get_db

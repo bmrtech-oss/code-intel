@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List
 from datetime import datetime
 from code_intel.services.analysis_service import AnalysisService
 

@@ -5,7 +5,7 @@ from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc
 from sqlalchemy.orm import selectinload
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 from code_intel.core.storage import get_db
 from code_intel.core.models import ModuleAnalysis, AnalysisVersion
 
