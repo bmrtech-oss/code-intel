@@ -103,11 +103,29 @@ def resolve_version(repo_path: str, branch: Optional[str] = None) -> str:
     else:
         try:
             import git
+            import tempfile
 
             abs_path = os.path.abspath(repo_path)
             real_path = os.path.realpath(abs_path)
 
-            if not _is_within_allowed_root(real_path):
+            allowed_roots = [
+                os.path.realpath("/repo"),
+                os.path.realpath("/shared"),
+                os.path.realpath(os.getcwd()),
+                os.path.realpath(tempfile.gettempdir()),
+            ]
+            is_allowed = False
+            for root in allowed_roots:
+                if not root:
+                    continue
+                try:
+                    if os.path.commonpath([root, real_path]) == root:
+                        is_allowed = True
+                        break
+                except ValueError:
+                    continue
+
+            if not is_allowed:
                 return str(int(datetime.utcnow().timestamp()))
 
             if os.path.exists(real_path):
