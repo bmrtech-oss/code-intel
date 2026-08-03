@@ -220,6 +220,94 @@ def test_get_repo_tree():
     finally:
         app.dependency_overrides.clear()
 
+def test_get_graph_suffix_resolution_all_level_unqualified_names():
+    client = TestClient(app)
+
+    mock_db = MagicMock()
+    mock_execute = AsyncMock()
+    mock_db.execute = mock_execute
+
+    mock_nodes_result = MagicMock()
+    mock_nodes_result.mappings.return_value = [
+        {"fqn": ".tmp.codeintel_abc.pkg.f1", "kind": "function", "file": "src/main.py"},
+        {"fqn": ".tmp.codeintel_abc.pkg.f2", "kind": "function", "file": "src/auth.py"}
+    ]
+    mock_edges_result = MagicMock()
+    mock_edges_result.mappings.return_value = [
+        {"from_fqn": "f1", "to_fqn": "f2"}  # Unqualified/partially-qualified caller & callee in edge DB
+    ]
+
+    mock_execute.side_effect = [mock_nodes_result, mock_edges_result]
+
+    async def override_get_db():
+        yield mock_db
+
+    app.dependency_overrides[get_db] = override_get_db
+
+    try:
+        response = client.get("/graph?version=sha-123&level=all")
+        assert response.status_code == 200
+        data = response.json()
+
+        # Both unqualified source and target should be mapped correctly to their full FQNs in db_nodes
+        assert "nodes" in data
+        assert "edges" in data
+        assert {n["id"] for n in data["nodes"]} == {".tmp.codeintel_abc.pkg.f1", ".tmp.codeintel_abc.pkg.f2"}
+        assert len(data["edges"]) == 1
+        assert data["edges"][0] == {
+            "source": ".tmp.codeintel_abc.pkg.f1",
+            "target": ".tmp.codeintel_abc.pkg.f2",
+            "type": "calls"
+        }
+
+    finally:
+        app.dependency_overrides.clear()
+
+def test_get_graph_suffix_resolution_all_level_with_focus_unqualified():
+    client = TestClient(app)
+
+    mock_db = MagicMock()
+    mock_execute = AsyncMock()
+    mock_db.execute = mock_execute
+
+    mock_nodes_result = MagicMock()
+    mock_nodes_result.mappings.return_value = [
+        {"fqn": ".tmp.codeintel_abc.pkg.f1", "kind": "function", "file": "src/main.py"},
+        {"fqn": ".tmp.codeintel_abc.pkg.f2", "kind": "function", "file": "src/auth.py"}
+    ]
+    mock_edges_result = MagicMock()
+    mock_edges_result.mappings.return_value = [
+        {"from_fqn": "f1", "to_fqn": "f2"}
+    ]
+
+    mock_execute.side_effect = [mock_nodes_result, mock_edges_result]
+
+    async def override_get_db():
+        yield mock_db
+
+    app.dependency_overrides[get_db] = override_get_db
+
+    try:
+        # User queries focus_symbol as a suffix: "f1"
+        response = client.get("/graph?version=sha-123&level=all&focus_symbol=f1")
+        assert response.status_code == 200
+        data = response.json()
+
+        # The unqualified focus_symbol suffix "f1" should be resolved to ".tmp.codeintel_abc.pkg.f1"
+        # and both nodes should be returned
+        assert "nodes" in data
+        assert "edges" in data
+        assert {n["id"] for n in data["nodes"]} == {".tmp.codeintel_abc.pkg.f1", ".tmp.codeintel_abc.pkg.f2"}
+        assert len(data["edges"]) == 1
+        assert data["edges"][0] == {
+            "source": ".tmp.codeintel_abc.pkg.f1",
+            "target": ".tmp.codeintel_abc.pkg.f2",
+            "type": "calls"
+        }
+
+    finally:
+        app.dependency_overrides.clear()
+
 def test_post_config_llm_test():
     client = TestClient(app)
 

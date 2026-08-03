@@ -919,27 +919,48 @@ async def get_graph(version: str, response: Response, level: str = "file", focus
     else: # level == "all"
         # Full function-level network or radial depth 1 around focus_symbol
         symbol_to_kind = {n["fqn"]: n.get("kind", "symbol") for n in db_nodes}
+        local_fqns = {n["fqn"] for n in db_nodes if n.get("fqn")}
+
+        # Suffix-to-FQN map to resolve unqualified/partially-qualified names to local FQNs
+        suffix_to_fqn = {}
+        for fqn in sorted(list(local_fqns)):
+            parts = fqn.split(".")
+            for i in range(1, len(parts) + 1):
+                suffix = ".".join(parts[-i:])
+                if suffix not in suffix_to_fqn:
+                    suffix_to_fqn[suffix] = fqn
 
         if focus_symbol:
+            # Resolve focus_symbol to its local FQN if it's a suffix
+            resolved_focus = focus_symbol if focus_symbol in local_fqns else suffix_to_fqn.get(focus_symbol, focus_symbol)
+
             # Radial depth of 1 from focus_symbol
-            keep_nodes = {focus_symbol}
+            keep_nodes = {resolved_focus}
+            seen_edges = set()
             for e in db_edges:
                 src = e.get("from_fqn")
                 tgt = e.get("to_fqn")
+                if not src or not tgt:
+                    continue
 
-                is_src_match = (src == focus_symbol or (src and focus_symbol.endswith("." + src)))
-                is_tgt_match = (tgt == focus_symbol or (tgt and focus_symbol.endswith("." + tgt)))
+                resolved_src = src if src in local_fqns else suffix_to_fqn.get(src, src)
+                resolved_tgt = tgt if tgt in local_fqns else suffix_to_fqn.get(tgt, tgt)
+
+                is_src_match = (resolved_src == resolved_focus or src == resolved_focus or (src and resolved_focus.endswith("." + src)))
+                is_tgt_match = (resolved_tgt == resolved_focus or tgt == resolved_focus or (tgt and resolved_focus.endswith("." + tgt)))
 
                 if is_src_match or is_tgt_match:
-                    if src:
-                        keep_nodes.add(src)
-                    if tgt:
-                        keep_nodes.add(tgt)
-                    edges.append({
-                        "source": src,
-                        "target": tgt,
-                        "type": "calls"
-                    })
+                    if resolved_src in local_fqns and resolved_tgt in local_fqns:
+                        keep_nodes.add(resolved_src)
+                        keep_nodes.add(resolved_tgt)
+                        edge_tuple = (resolved_src, resolved_tgt)
+                        if edge_tuple not in seen_edges:
+                            seen_edges.add(edge_tuple)
+                            edges.append({
+                                "source": resolved_src,
+                                "target": resolved_tgt,
+                                "type": "calls"
+                            })
 
             for fqn in sorted(list(keep_nodes)):
                 kind = symbol_to_kind.get(fqn, "symbol")
@@ -957,12 +978,26 @@ async def get_graph(version: str, response: Response, level: str = "file", focus
                     "label": fqn.split(".")[-1] if "." in fqn else fqn,
                     "type": n.get("kind", "symbol")
                 })
+
+            seen_edges = set()
             for e in db_edges:
-                edges.append({
-                    "source": e.get("from_fqn"),
-                    "target": e.get("to_fqn"),
-                    "type": "calls"
-                })
+                src = e.get("from_fqn")
+                tgt = e.get("to_fqn")
+                if not src or not tgt:
+                    continue
+
+                resolved_src = src if src in local_fqns else suffix_to_fqn.get(src, src)
+                resolved_tgt = tgt if tgt in local_fqns else suffix_to_fqn.get(tgt, tgt)
+
+                if resolved_src in local_fqns and resolved_tgt in local_fqns:
+                    edge_tuple = (resolved_src, resolved_tgt)
+                    if edge_tuple not in seen_edges:
+                        seen_edges.add(edge_tuple)
+                        edges.append({
+                            "source": resolved_src,
+                            "target": resolved_tgt,
+                            "type": "calls"
+                        })
 
     return {
         "nodes": nodes,
