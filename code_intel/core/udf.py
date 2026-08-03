@@ -249,6 +249,108 @@ class LLMUDF:
             }
         }
 
+    async def generate_structured(self, prompt: str, schema_model: type[BaseModel]) -> Dict[str, Any]:
+        """
+        Extract structured response forced to follow a Pydantic schema model dynamically across providers.
+        """
+        if self.provider == "ollama":
+            response = await self.ollama_client.generate(
+                model=self.model,
+                prompt=prompt,
+                format=schema_model.model_json_schema(),
+                options={"temperature": LLM_TEMPERATURE}
+            )
+            raw_text = response.response
+        elif self.provider in ("openrouter", "openai"):
+            try:
+                import httpx
+                async with httpx.AsyncClient() as client:
+                    headers = {
+                        "Authorization": f"Bearer {self.api_key}",
+                        "HTTP-Referer": "https://github.com/code-intel/code-intel",
+                        "X-Title": "Code-Intel",
+                        "Content-Type": "application/json"
+                    }
+                    payload = {
+                        "model": self.model,
+                        "messages": [
+                            {"role": "system", "content": "You are a helpful assistant that outputs JSON."},
+                            {"role": "user", "content": prompt}
+                        ],
+                        "response_format": {"type": "json_object"},
+                        "temperature": LLM_TEMPERATURE
+                    }
+                    resp = await client.post(
+                        f"{self.base_url}/chat/completions",
+                        headers=headers,
+                        json=payload,
+                        timeout=15.0
+                    )
+                    resp.raise_for_status()
+                    data = resp.json()
+                    raw_text = data["choices"][0]["message"]["content"]
+            except Exception as e:
+                logging.warning(f"Cloud LLM request failed ({e}). Falling back to local offline Ollama engine...")
+                self.provider = "ollama"
+                self.model = "phi3:mini"
+                from ..settings import OLLAMA_URL
+                self.ollama_client = AsyncClient(host=OLLAMA_URL)
+
+                response = await self.ollama_client.generate(
+                    model=self.model,
+                    prompt=prompt,
+                    format=schema_model.model_json_schema(),
+                    options={"temperature": LLM_TEMPERATURE}
+                )
+                raw_text = response.response
+        elif self.provider == "google":
+            try:
+                import google.generativeai as genai
+                import asyncio
+                loop = asyncio.get_event_loop()
+
+                def _gen():
+                    resp = self.google_client.generate_content(
+                        prompt,
+                        generation_config=genai.GenerationConfig(
+                            response_mime_type="application/json",
+                            response_schema=schema_model.model_json_schema(),
+                            temperature=LLM_TEMPERATURE
+                        )
+                    )
+                    return resp.text
+
+                raw_text = await loop.run_in_executor(None, _gen)
+            except Exception as e:
+                logging.warning(f"Cloud Gemini request failed ({e}). Falling back to local offline Ollama engine...")
+                self.provider = "ollama"
+                self.model = "phi3:mini"
+                from ..settings import OLLAMA_URL
+                self.ollama_client = AsyncClient(host=OLLAMA_URL)
+
+                response = await self.ollama_client.generate(
+                    model=self.model,
+                    prompt=prompt,
+                    format=schema_model.model_json_schema(),
+                    options={"temperature": LLM_TEMPERATURE}
+                )
+                raw_text = response.response
+        else:
+            raise ValueError(f"Unknown LLM provider: {self.provider}")
+
+        # Parse with template handler parsing patterns (includes json_repair fallback)
+        parsed = self.handler.parse_response(raw_text)
+
+        # Validate structured schema
+        if "error" not in parsed:
+            try:
+                schema_model.model_validate(parsed)
+            except Exception as e:
+                logging.error(f"Pydantic validation failed: {e}")
+                parsed["error"] = f"Validation failed: {str(e)}"
+
+        return parsed
+
     def validate_artifact(self, artifact: Dict[str, Any], symbols: List[Dict], calls: List[Dict]) -> Tuple[bool, float]:
         if not isinstance(artifact, dict) or "tasks" not in artifact:
             return True, 1.0

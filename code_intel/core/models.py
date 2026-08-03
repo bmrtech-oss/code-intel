@@ -1,7 +1,7 @@
 import json
-from sqlalchemy import Column, String, Integer, DateTime, Text, BigInteger, Float, UniqueConstraint, Boolean
+from sqlalchemy import Column, String, Integer, DateTime, Text, BigInteger, Float, UniqueConstraint, Boolean, ForeignKey, JSON
 from sqlalchemy.sql import func
-from sqlalchemy.orm import declarative_base
+from sqlalchemy.orm import declarative_base, relationship
 from pgvector.sqlalchemy import Vector
 from datetime import datetime
 from sqlalchemy.types import TypeDecorator
@@ -103,6 +103,8 @@ class GraphNode(Base):
     version = Column(String, index=True)
     introduced_in = Column(String)
     deleted_in = Column(String, nullable=True)
+    valid_from_sha = Column(String, nullable=True, index=True)
+    valid_to_sha = Column(String, nullable=True, index=True)
 
 class GraphEdge(Base):
     """Read Model: Optimized for traversal"""
@@ -115,6 +117,8 @@ class GraphEdge(Base):
     confidence = Column(Float)
     introduced_in = Column(String)
     deleted_in = Column(String, nullable=True)
+    valid_from_sha = Column(String, nullable=True, index=True)
+    valid_to_sha = Column(String, nullable=True, index=True)
 
 class LLMArtifact(Base):
     __tablename__ = 'llm_artifacts'
@@ -129,3 +133,27 @@ class LLMArtifact(Base):
     is_verified = Column(Boolean, default=True)
     confidence = Column(Float, default=1.0)
     timestamp = Column(DateTime, server_default=func.now())
+
+class ModuleAnalysis(Base):
+    __tablename__ = 'module_analyses'
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    module_path = Column(String, index=True, nullable=False)
+    status = Column(String(50), nullable=False, default='DRAFT')
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    versions = relationship("AnalysisVersion", back_populates="module_analysis", cascade="all, delete-orphan")
+
+class AnalysisVersion(Base):
+    __tablename__ = 'analysis_versions'
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    module_analysis_id = Column(BigInteger, ForeignKey('module_analyses.id', ondelete='CASCADE'), nullable=False)
+    git_commit_sha = Column(String(40), index=True, nullable=False)
+    version_num = Column(Integer, nullable=False)
+    business_rules = Column(JSON, nullable=True)
+    edge_cases = Column(JSON, nullable=True)
+    data_transformations = Column(JSON, nullable=True)
+    side_effects = Column(JSON, nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
+
+    module_analysis = relationship("ModuleAnalysis", back_populates="versions")
