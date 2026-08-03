@@ -20,7 +20,10 @@ from ..core.git_handler import GitRepoHandler
 from ..worker.tasks import queue, llm_queue, run_ingestion, generate_requirements_task
 from ..settings import ALLOWED_ORIGINS
 
+from .routes.graph import router as graph_router
+
 app = FastAPI(title="Code Intelligence Platform (Prod)", version="1.0.0")
+app.include_router(graph_router)
 
 @app.exception_handler(PermissionError)
 async def permission_error_handler(request: Request, exc: PermissionError):

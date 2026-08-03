@@ -103,6 +103,8 @@ class GraphNode(Base):
     version = Column(String, index=True)
     introduced_in = Column(String)
     deleted_in = Column(String, nullable=True)
+    valid_from_sha = Column(String, nullable=True, index=True)
+    valid_to_sha = Column(String, nullable=True, index=True)
 
 class GraphEdge(Base):
     """Read Model: Optimized for traversal"""
@@ -115,6 +117,8 @@ class GraphEdge(Base):
     confidence = Column(Float)
     introduced_in = Column(String)
     deleted_in = Column(String, nullable=True)
+    valid_from_sha = Column(String, nullable=True, index=True)
+    valid_to_sha = Column(String, nullable=True, index=True)
 
 class LLMArtifact(Base):
     __tablename__ = 'llm_artifacts'

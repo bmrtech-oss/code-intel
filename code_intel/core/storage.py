@@ -66,7 +66,16 @@ class VersionedStorage:
             """), {"ei": entity_id, "v": version})
             row = res.fetchone()
             if row and row[0]:
-                gn = GraphNode(id=row[3], fqn=row[0], kind=row[1], file=row[2], version=version, introduced_in=version)
+                gn = GraphNode(
+                    id=row[3],
+                    fqn=row[0],
+                    kind=row[1],
+                    file=row[2],
+                    version=version,
+                    introduced_in=version,
+                    valid_from_sha=version,
+                    valid_to_sha=None
+                )
                 await self.session.merge(gn)
         elif entity_type == "call":
              res = await self.session.execute(text("""
@@ -79,7 +88,17 @@ class VersionedStorage:
             """), {"ei": entity_id, "v": version})
              row = res.fetchone()
              if row and row[0]:
-                ge = GraphEdge(id=row[3], from_fqn=row[0], to_fqn=row[1], confidence=float(row[2] or 1.0), edge_type="CALLS", version=version, introduced_in=version)
+                ge = GraphEdge(
+                    id=row[3],
+                    from_fqn=row[0],
+                    to_fqn=row[1],
+                    confidence=float(row[2] or 1.0),
+                    edge_type="CALLS",
+                    version=version,
+                    introduced_in=version,
+                    valid_from_sha=version,
+                    valid_to_sha=None
+                )
                 await self.session.merge(ge)
 
     async def rebuild_read_model(self, version: str):
@@ -90,24 +109,24 @@ class VersionedStorage:
 
         # Insert symbols
         await self.session.execute(text("""
-            INSERT INTO graph_nodes (id, fqn, kind, file, version, introduced_in)
+            INSERT INTO graph_nodes (id, fqn, kind, file, version, introduced_in, valid_from_sha, valid_to_sha)
             SELECT MAX(id), 
                    MAX(CASE WHEN attribute = 'name' THEN value END),
                    MAX(CASE WHEN attribute = 'kind' THEN value END),
                    MAX(CASE WHEN attribute = 'file' THEN value END),
-                   version, version
+                   version, version, version, NULL
             FROM facts WHERE entity_type='symbol' AND version = :v AND valid_to IS NULL
             GROUP BY entity_id, version
         """), {"v": version})
 
         # Insert calls
         await self.session.execute(text("""
-            INSERT INTO graph_edges (id, from_fqn, to_fqn, confidence, edge_type, version, introduced_in)
+            INSERT INTO graph_edges (id, from_fqn, to_fqn, confidence, edge_type, version, introduced_in, valid_from_sha, valid_to_sha)
             SELECT MAX(id),
                    MAX(CASE WHEN attribute = 'caller' THEN value END),
                    MAX(CASE WHEN attribute = 'callee' THEN value END),
                    CAST(MAX(CASE WHEN attribute = 'confidence' THEN value END) AS FLOAT),
-                   'CALLS', version, version
+                   'CALLS', version, version, version, NULL
             FROM facts WHERE entity_type='call' AND version = :v AND valid_to IS NULL
             GROUP BY entity_id, version
         """), {"v": version})
