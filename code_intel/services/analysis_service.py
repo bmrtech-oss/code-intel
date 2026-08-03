@@ -4,6 +4,7 @@ from pathlib import Path
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc
+from sqlalchemy.orm import selectinload
 from typing import List, Dict, Any, Optional
 from code_intel.core.storage import get_db
 from code_intel.core.models import ModuleAnalysis, AnalysisVersion
@@ -68,9 +69,13 @@ class AnalysisService:
             self.db.add(av)
             await self.db.commit()
 
-            # Refresh to load relations
-            await self.db.refresh(ma)
-            return ma
+            # Fetch with eager loading of versions to prevent greenlet lazy load exceptions
+            result = await self.db.execute(
+                select(ModuleAnalysis)
+                .where(ModuleAnalysis.id == ma.id)
+                .options(selectinload(ModuleAnalysis.versions))
+            )
+            return result.scalar_one()
         except Exception:
             await self.db.rollback()
             raise
@@ -81,9 +86,11 @@ class AnalysisService:
         Only permitted if the ModuleAnalysis is in DRAFT status.
         """
         try:
-            # 1. Fetch ModuleAnalysis
+            # 1. Fetch ModuleAnalysis with eager loaded versions
             result = await self.db.execute(
-                select(ModuleAnalysis).where(ModuleAnalysis.id == analysis_id)
+                select(ModuleAnalysis)
+                .where(ModuleAnalysis.id == analysis_id)
+                .options(selectinload(ModuleAnalysis.versions))
             )
             ma = result.scalar_one_or_none()
             if not ma:
@@ -109,8 +116,14 @@ class AnalysisService:
             av.side_effects = new_json.get("side_effects", av.side_effects)
 
             await self.db.commit()
-            await self.db.refresh(ma)
-            return ma
+
+            # Refresh with selectinload
+            result = await self.db.execute(
+                select(ModuleAnalysis)
+                .where(ModuleAnalysis.id == analysis_id)
+                .options(selectinload(ModuleAnalysis.versions))
+            )
+            return result.scalar_one()
         except Exception:
             await self.db.rollback()
             raise
@@ -122,7 +135,9 @@ class AnalysisService:
         try:
             # 1. Fetch ModuleAnalysis
             result = await self.db.execute(
-                select(ModuleAnalysis).where(ModuleAnalysis.id == analysis_id)
+                select(ModuleAnalysis)
+                .where(ModuleAnalysis.id == analysis_id)
+                .options(selectinload(ModuleAnalysis.versions))
             )
             ma = result.scalar_one_or_none()
             if not ma:
@@ -155,8 +170,14 @@ class AnalysisService:
             self.db.add(new_av)
 
             await self.db.commit()
-            await self.db.refresh(ma)
-            return ma
+
+            # Refresh with selectinload
+            result = await self.db.execute(
+                select(ModuleAnalysis)
+                .where(ModuleAnalysis.id == analysis_id)
+                .options(selectinload(ModuleAnalysis.versions))
+            )
+            return result.scalar_one()
         except Exception:
             await self.db.rollback()
             raise
@@ -182,7 +203,9 @@ class AnalysisService:
 
         try:
             result = await self.db.execute(
-                select(ModuleAnalysis).where(ModuleAnalysis.id == analysis_id)
+                select(ModuleAnalysis)
+                .where(ModuleAnalysis.id == analysis_id)
+                .options(selectinload(ModuleAnalysis.versions))
             )
             ma = result.scalar_one_or_none()
             if not ma:
@@ -190,8 +213,25 @@ class AnalysisService:
 
             ma.module_path = new_file_path
             await self.db.commit()
-            await self.db.refresh(ma)
-            return ma
+
+            # Refresh with selectinload
+            result = await self.db.execute(
+                select(ModuleAnalysis)
+                .where(ModuleAnalysis.id == analysis_id)
+                .options(selectinload(ModuleAnalysis.versions))
+            )
+            return result.scalar_one()
         except Exception:
             await self.db.rollback()
             raise
+
+    async def get_all_analyses(self) -> List[ModuleAnalysis]:
+        """
+        Returns all ModuleAnalysis master records ordered by their last update timestamp descending.
+        """
+        result = await self.db.execute(
+            select(ModuleAnalysis)
+            .order_by(ModuleAnalysis.updated_at.desc())
+            .options(selectinload(ModuleAnalysis.versions))
+        )
+        return list(result.scalars().all())
