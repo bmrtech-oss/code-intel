@@ -1320,13 +1320,15 @@ async def open_editor(payload: dict):
         # Handles mixed-drive or invalid path scenarios on some platforms.
         raise HTTPException(status_code=400, detail="Unauthorized or unsafe file path")
 
+    open_target = file_path
+
     try:
         if sys.platform == "win32":
-            os.startfile(normalized_path)
+            os.startfile(open_target)
         elif sys.platform == "darwin":
-            subprocess.run(["open", normalized_path], check=True)
+            subprocess.run(["open", open_target], check=True)
         else:
-            subprocess.run(["xdg-open", normalized_path], check=True)
+            subprocess.run(["xdg-open", open_target], check=True)
         return {"status": "success"}
     except Exception:
         raise HTTPException(status_code=500, detail="Failed to open file")

@@ -352,7 +352,7 @@ def test_open_editor_does_not_expose_raw_exception_details():
 
     with patch("sys.platform", "win32"), \
          patch("code_intel.api.server.is_safe_path", return_value=True), \
-         patch("os.startfile", side_effect=RuntimeError("secret-path-detail")):
+         patch("os.startfile", create=True, side_effect=RuntimeError("secret-path-detail")):
         response = client.post("/api/open-editor", json={"file_path": "code_intel/api/server.py"})
 
     assert response.status_code == 500
