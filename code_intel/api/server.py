@@ -1,6 +1,7 @@
 import os
 import re
 import json
+from pathlib import Path
 from ..utils.traceability import fuzzy_match_symbols
 from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks, Response, Body
 from fastapi.responses import StreamingResponse
@@ -57,32 +58,34 @@ def is_git_url(path: str) -> bool:
     """Check if the path is a Git repository URL."""
     return bool(re.match(r'^(https?://|git@)', path))
 
-def _is_within_allowed_root(path: str) -> bool:
-    """Return True when the resolved path stays under an allowed root directory."""
+def _resolve_allowed_path(path: str) -> Optional[str]:
+    """Return a normalized path only if it stays under one of the trusted roots."""
     try:
         import tempfile
 
-        abs_path = os.path.abspath(path)
-        real_path = os.path.realpath(abs_path)
-
-        allowed_roots = []
-        for candidate in ("/repo", "/shared"):
-            allowed_roots.append(os.path.realpath(candidate))
-
-        cwd_dir = os.path.realpath(os.getcwd())
-        temp_dir = os.path.realpath(tempfile.gettempdir())
-        allowed_roots.extend([cwd_dir, temp_dir])
+        candidate = Path(os.path.abspath(path)).resolve(strict=False)
+        allowed_roots = [
+            Path(os.path.realpath("/repo")),
+            Path(os.path.realpath("/shared")),
+            Path(os.path.realpath(os.getcwd())),
+            Path(os.path.realpath(tempfile.gettempdir())),
+        ]
 
         for root in allowed_roots:
-            if not root:
+            try:
+                candidate.relative_to(root.resolve(strict=False))
+                return str(candidate)
+            except ValueError:
                 continue
-            root_path = root if root.endswith(os.path.sep) else root + os.path.sep
-            if real_path == root or real_path.startswith(root_path):
-                return True
 
-        return False
+        return None
     except Exception:
-        return False
+        return None
+
+
+def _is_within_allowed_root(path: str) -> bool:
+    """Return True when the resolved path stays under an allowed root directory."""
+    return _resolve_allowed_path(path) is not None
 
 
 def resolve_version(repo_path: str, branch: Optional[str] = None) -> str:
@@ -103,33 +106,13 @@ def resolve_version(repo_path: str, branch: Optional[str] = None) -> str:
     else:
         try:
             import git
-            import tempfile
 
-            abs_path = os.path.abspath(repo_path)
-            real_path = os.path.realpath(abs_path)
-
-            allowed_roots = [
-                os.path.realpath("/repo"),
-                os.path.realpath("/shared"),
-                os.path.realpath(os.getcwd()),
-                os.path.realpath(tempfile.gettempdir()),
-            ]
-            is_allowed = False
-            for root in allowed_roots:
-                if not root:
-                    continue
-                try:
-                    if os.path.commonpath([root, real_path]) == root:
-                        is_allowed = True
-                        break
-                except ValueError:
-                    continue
-
-            if not is_allowed:
+            safe_repo_path = _resolve_allowed_path(repo_path)
+            if not safe_repo_path:
                 return str(int(datetime.utcnow().timestamp()))
 
-            if os.path.exists(real_path):
-                repo = git.Repo(real_path)
+            if os.path.exists(safe_repo_path):
+                repo = git.Repo(safe_repo_path)
                 return repo.head.commit.hexsha
         except Exception as e:
             print(f"Error resolving local Git version: {e}")
@@ -1219,9 +1202,12 @@ async def requirements_stream(req: Optional[RequirementsRequest] = Body(None), v
                 await db.commit()
 
             yield f"data: {json.dumps({'done': True, 'traceability_stored': traceability_stored})}\n\n"
-        except Exception as e:
+        except Exception:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.exception("LLM generation failed for requirements stream")
             error_payload = {
-                "error": f"LLM Generation failed: {str(e)}",
+                "error": "LLM Generation failed",
                 "done": True
             }
             yield f"data: {json.dumps(error_payload)}\n\n"
@@ -1336,7 +1322,11 @@ async def open_editor(payload: dict):
         # Handles mixed-drive or invalid path scenarios on some platforms.
         raise HTTPException(status_code=400, detail="Unauthorized or unsafe file path")
 
-    open_target = normalized_path
+    safe_path = _resolve_allowed_path(normalized_path)
+    if not safe_path:
+        raise HTTPException(status_code=400, detail="Unauthorized or unsafe file path")
+
+    open_target = safe_path
 
     try:
         if sys.platform == "win32":
