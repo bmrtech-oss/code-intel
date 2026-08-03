@@ -1307,12 +1307,10 @@ async def open_editor(payload: dict):
     import subprocess
     import os
 
-    if not is_safe_path(file_path):
-        raise HTTPException(status_code=400, detail="Unauthorized or unsafe file path")
-
     # Normalize and ensure the path stays within a trusted base directory.
     base_dir = os.path.realpath(os.getcwd())
-    normalized_path = os.path.realpath(file_path)
+    candidate_path = file_path if os.path.isabs(file_path) else os.path.join(base_dir, file_path)
+    normalized_path = os.path.realpath(candidate_path)
     try:
         if os.path.commonpath([base_dir, normalized_path]) != base_dir:
             raise HTTPException(status_code=400, detail="Unauthorized or unsafe file path")
@@ -1320,7 +1318,7 @@ async def open_editor(payload: dict):
         # Handles mixed-drive or invalid path scenarios on some platforms.
         raise HTTPException(status_code=400, detail="Unauthorized or unsafe file path")
 
-    open_target = file_path
+    open_target = normalized_path
 
     try:
         if sys.platform == "win32":
