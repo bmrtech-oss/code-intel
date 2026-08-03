@@ -1,8 +1,9 @@
 import os
 import re
 import json
-import tempfile
+from pathlib import Path
 from ..utils.traceability import fuzzy_match_symbols
+import tempfile
 from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks, Response, Body, Request
 from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -65,6 +66,47 @@ def is_git_url(path: str) -> bool:
     """Check if the path is a Git repository URL."""
     return bool(re.match(r'^(https?://|git@)', path))
 
+def _resolve_allowed_path(path: str) -> Optional[str]:
+    """Return a normalized path only if it stays under one of the trusted roots."""
+    try:
+        import tempfile
+
+        if not path or "\x00" in path:
+            return None
+
+        # Reject URL-like inputs here; only local filesystem paths are allowed.
+        if is_git_url(path):
+            return None
+
+        # Canonicalize user input before constructing a Path object.
+        normalized_input = os.path.normpath(os.path.expanduser(path))
+        candidate = Path(os.path.abspath(normalized_input)).resolve(strict=False)
+        app_temp_root = (Path(tempfile.gettempdir()) / "code_intel").resolve(strict=False)
+        allowed_roots = [
+            Path("/repo").resolve(strict=False),
+            Path("/shared").resolve(strict=False),
+            app_temp_root,
+            Path(os.path.realpath(os.getcwd())).resolve(strict=False),
+            Path(os.path.realpath(tempfile.gettempdir())).resolve(strict=False),
+        ]
+
+        for root in allowed_roots:
+            try:
+                candidate.relative_to(root)
+                return str(candidate)
+            except ValueError:
+                continue
+
+        return None
+    except Exception:
+        return None
+
+
+def _is_within_allowed_root(path: str) -> bool:
+    """Return True when the resolved path stays under an allowed root directory."""
+    return _resolve_allowed_path(path) is not None
+
+
 def resolve_version(repo_path: str, branch: Optional[str] = None) -> str:
     """Resolve the latest commit SHA for a remote Git URL or a local Git repo."""
     if is_git_url(repo_path):
@@ -83,55 +125,33 @@ def resolve_version(repo_path: str, branch: Optional[str] = None) -> str:
     else:
         try:
             import git
-            import tempfile
 
-            abs_path = os.path.abspath(repo_path)
-            real_path = os.path.realpath(abs_path)
-
+            safe_repo_path = _resolve_allowed_path(repo_path)
+            # Direct string-literal prefix checking for CodeQL path traversal sanitization
             cwd_dir = os.path.realpath(os.getcwd())
             cwd_dir_slash = cwd_dir if cwd_dir.endswith(os.path.sep) else cwd_dir + os.path.sep
             temp_dir = os.path.realpath(tempfile.gettempdir())
             temp_dir_slash = temp_dir if temp_dir.endswith(os.path.sep) else temp_dir + os.path.sep
 
-            # Direct string-literal prefix checking for CodeQL path traversal sanitization
-            if not (real_path.startswith("/repo/") or real_path.startswith("/shared/") or real_path.startswith(cwd_dir_slash) or real_path.startswith(temp_dir_slash) or real_path == "/repo" or real_path == "/shared"):
+            if not safe_repo_path or not (safe_repo_path.startswith("/repo/") or safe_repo_path.startswith("/shared/") or safe_repo_path.startswith(cwd_dir_slash) or safe_repo_path.startswith(temp_dir_slash) or safe_repo_path == "/repo" or safe_repo_path == "/shared"):
                 raise PermissionError("Unsafe repository path")
 
-            if os.path.exists(real_path):
-                repo = git.Repo(real_path)
+            if os.path.exists(safe_repo_path):
+                repo = git.Repo(safe_repo_path)
                 return repo.head.commit.hexsha
+        except PermissionError as pe:
+            raise pe
         except Exception as e:
             print(f"Error resolving local Git version: {e}")
 
     return str(int(datetime.utcnow().timestamp()))
 
+
 def is_safe_path(path: str) -> bool:
     """Check if the resolved path is within permitted directories."""
-    try:
-        import tempfile
-        # Resolve real absolute path
-        abs_path = os.path.abspath(path)
-        real_path = os.path.realpath(abs_path)
-
-        # Explicit string-literal checking for CodeQL compliance
-        if real_path == "/repo" or real_path.startswith("/repo/"):
-            return True
-        if real_path == "/shared" or real_path.startswith("/shared/"):
-            return True
-
-        cwd_dir = os.path.realpath(os.getcwd())
-        cwd_dir_slash = cwd_dir if cwd_dir.endswith(os.path.sep) else cwd_dir + os.path.sep
-        temp_dir = os.path.realpath(tempfile.gettempdir())
-        temp_dir_slash = temp_dir if temp_dir.endswith(os.path.sep) else temp_dir + os.path.sep
-
-        if real_path == cwd_dir or real_path.startswith(cwd_dir_slash):
-            return True
-        if real_path == temp_dir or real_path.startswith(temp_dir_slash):
-            return True
-
+    if not path:
         return False
-    except Exception:
-        return False
+    return _is_within_allowed_root(path)
 
 async def find_best_version(version: str, db: AsyncSession) -> str:
     """Find the requested version or the closest parsed/existing version in the database."""
@@ -454,12 +474,10 @@ async def test_llm_connection(req: Optional[TestLLMRequest] = Body(None)):
             "model": udf.model,
             "response": text_resp.strip()
         }
-    except Exception as e:
-        import logging
-        logging.error(f"LLM connection check failed: {e}", exc_info=True)
+    except Exception:
         return {
             "status": "failed",
-            "error": "LLM connection verification failed. Please check your credentials and configuration.",
+            "error": "Unable to verify LLM connection. Check server logs for details.",
             "provider": udf.provider,
             "model": udf.model
         }
@@ -885,17 +903,6 @@ async def get_graph(version: str, response: Response, level: str = "file", focus
     nodes = []
     edges = []
 
-    # Suffix-matching lookup map for unqualified/partially-qualified symbol names (e.g. read_csv_data -> starter_repo.plot_data.read_csv_data)
-    suffix_to_fqn = {}
-    for n in db_nodes:
-        fqn = n.get("fqn")
-        if fqn:
-            parts = fqn.split(".")
-            for i in range(1, min(len(parts) + 1, 4)):
-                suffix = ".".join(parts[-i:])
-                if suffix not in suffix_to_fqn:
-                    suffix_to_fqn[suffix] = fqn
-
     if level == "file":
         # Only FileNode nodes and file-to-file dependencies
         unique_files = sorted(list(set(n["file"] for n in db_nodes if n.get("file"))))
@@ -937,36 +944,48 @@ async def get_graph(version: str, response: Response, level: str = "file", focus
     else: # level == "all"
         # Full function-level network or radial depth 1 around focus_symbol
         symbol_to_kind = {n["fqn"]: n.get("kind", "symbol") for n in db_nodes}
+        local_fqns = {n["fqn"] for n in db_nodes if n.get("fqn")}
+
+        # Suffix-to-FQN map to resolve unqualified/partially-qualified names to local FQNs
+        suffix_to_fqn = {}
+        for fqn in sorted(list(local_fqns)):
+            parts = fqn.split(".")
+            for i in range(1, len(parts) + 1):
+                suffix = ".".join(parts[-i:])
+                if suffix not in suffix_to_fqn:
+                    suffix_to_fqn[suffix] = fqn
 
         if focus_symbol:
+            # Resolve focus_symbol to its local FQN if it's a suffix
+            resolved_focus = focus_symbol if focus_symbol in local_fqns else suffix_to_fqn.get(focus_symbol, focus_symbol)
+
             # Radial depth of 1 from focus_symbol
-            resolved_focus = suffix_to_fqn.get(focus_symbol) or focus_symbol
             keep_nodes = {resolved_focus}
-            seen_calls = set()
+            seen_edges = set()
             for e in db_edges:
                 src = e.get("from_fqn")
                 tgt = e.get("to_fqn")
+                if not src or not tgt:
+                    continue
 
-                src_fqn = suffix_to_fqn.get(src) or src
-                tgt_fqn = suffix_to_fqn.get(tgt) or tgt
+                resolved_src = src if src in local_fqns else suffix_to_fqn.get(src, src)
+                resolved_tgt = tgt if tgt in local_fqns else suffix_to_fqn.get(tgt, tgt)
 
-                is_src_match = (src_fqn == resolved_focus or (src_fqn and resolved_focus.endswith("." + src_fqn)))
-                is_tgt_match = (tgt_fqn == resolved_focus or (tgt_fqn and resolved_focus.endswith("." + tgt_fqn)))
+                is_src_match = (resolved_src == resolved_focus or src == resolved_focus or (src and resolved_focus.endswith("." + src)))
+                is_tgt_match = (resolved_tgt == resolved_focus or tgt == resolved_focus or (tgt and resolved_focus.endswith("." + tgt)))
 
                 if is_src_match or is_tgt_match:
-                    if src_fqn:
-                        keep_nodes.add(src_fqn)
-                    if tgt_fqn:
-                        keep_nodes.add(tgt_fqn)
-
-                    edge_tuple = (src_fqn, tgt_fqn)
-                    if edge_tuple not in seen_calls:
-                        seen_calls.add(edge_tuple)
-                        edges.append({
-                            "source": src_fqn,
-                            "target": tgt_fqn,
-                            "type": "calls"
-                        })
+                    if resolved_src in local_fqns and resolved_tgt in local_fqns:
+                        keep_nodes.add(resolved_src)
+                        keep_nodes.add(resolved_tgt)
+                        edge_tuple = (resolved_src, resolved_tgt)
+                        if edge_tuple not in seen_edges:
+                            seen_edges.add(edge_tuple)
+                            edges.append({
+                                "source": resolved_src,
+                                "target": resolved_tgt,
+                                "type": "calls"
+                            })
 
             for fqn in sorted(list(keep_nodes)):
                 kind = symbol_to_kind.get(fqn, "symbol")
@@ -977,32 +996,31 @@ async def get_graph(version: str, response: Response, level: str = "file", focus
                 })
         else:
             # Return all function-level nodes and call-level edges
-            seen_nodes = set()
             for n in db_nodes:
                 fqn = n["fqn"]
-                if fqn not in seen_nodes:
-                    seen_nodes.add(fqn)
-                    nodes.append({
-                        "id": fqn,
-                        "label": fqn.split(".")[-1] if "." in fqn else fqn,
-                        "type": n.get("kind", "symbol")
-                    })
+                nodes.append({
+                    "id": fqn,
+                    "label": fqn.split(".")[-1] if "." in fqn else fqn,
+                    "type": n.get("kind", "symbol")
+                })
 
-            seen_calls = set()
+            seen_edges = set()
             for e in db_edges:
                 src = e.get("from_fqn")
                 tgt = e.get("to_fqn")
+                if not src or not tgt:
+                    continue
 
-                src_fqn = suffix_to_fqn.get(src) or src
-                tgt_fqn = suffix_to_fqn.get(tgt) or tgt
+                resolved_src = src if src in local_fqns else suffix_to_fqn.get(src, src)
+                resolved_tgt = tgt if tgt in local_fqns else suffix_to_fqn.get(tgt, tgt)
 
-                if src_fqn and tgt_fqn:
-                    edge_tuple = (src_fqn, tgt_fqn)
-                    if edge_tuple not in seen_calls:
-                        seen_calls.add(edge_tuple)
+                if resolved_src in local_fqns and resolved_tgt in local_fqns:
+                    edge_tuple = (resolved_src, resolved_tgt)
+                    if edge_tuple not in seen_edges:
+                        seen_edges.add(edge_tuple)
                         edges.append({
-                            "source": src_fqn,
-                            "target": tgt_fqn,
+                            "source": resolved_src,
+                            "target": resolved_tgt,
                             "type": "calls"
                         })
 
@@ -1223,11 +1241,12 @@ async def requirements_stream(req: Optional[RequirementsRequest] = Body(None), v
                 await db.commit()
 
             yield f"data: {json.dumps({'done': True, 'traceability_stored': traceability_stored})}\n\n"
-        except Exception as e:
+        except Exception:
             import logging
-            logging.error(f"LLM Generation failed: {e}", exc_info=True)
+            logger = logging.getLogger(__name__)
+            logger.exception("LLM generation failed for requirements stream")
             error_payload = {
-                "error": "LLM Generation failed. Please check server logs for details.",
+                "error": "LLM Generation failed",
                 "done": True
             }
             yield f"data: {json.dumps(error_payload)}\n\n"
@@ -1241,6 +1260,7 @@ async def requirements(req: Optional[RequirementsRequest] = Body(None), version:
     if not version:
         raise HTTPException(status_code=400, detail="No version found")
     
+    # Focused symbol selection is not currently used when enqueueing the job.
     job = llm_queue.enqueue(generate_requirements_task, version, session_id)
     return {"job_id": job.id, "status": "pending"}
 
@@ -1322,31 +1342,47 @@ async def open_editor(payload: dict):
     if file_path.startswith("file:"):
         file_path = file_path[5:]
 
-    abs_path = os.path.abspath(file_path)
-    real_path = os.path.realpath(abs_path)
+    # Security Check: Prevent directory traversal or arbitrary file handling
+    if not is_safe_path(file_path):
+        raise HTTPException(status_code=400, detail="Unauthorized or unsafe file path")
 
+    import sys
+    import subprocess
+    import os
+
+    # Normalize and ensure the path stays within a trusted base directory.
+    base_dir = os.path.realpath(os.getcwd())
+    candidate_path = file_path if os.path.isabs(file_path) else os.path.join(base_dir, file_path)
+    normalized_path = os.path.realpath(candidate_path)
+    try:
+        if os.path.commonpath([base_dir, normalized_path]) != base_dir:
+            raise HTTPException(status_code=400, detail="Unauthorized or unsafe file path")
+    except ValueError:
+        # Handles mixed-drive or invalid path scenarios on some platforms.
+        raise HTTPException(status_code=400, detail="Unauthorized or unsafe file path")
+
+    safe_path = _resolve_allowed_path(normalized_path)
     # Direct string-literal prefix checking for CodeQL path traversal sanitization
     cwd_dir = os.path.realpath(os.getcwd())
     cwd_dir_slash = cwd_dir if cwd_dir.endswith(os.path.sep) else cwd_dir + os.path.sep
     temp_dir = os.path.realpath(tempfile.gettempdir())
     temp_dir_slash = temp_dir if temp_dir.endswith(os.path.sep) else temp_dir + os.path.sep
 
-    if not (real_path.startswith("/repo/") or real_path.startswith("/shared/") or real_path.startswith(cwd_dir_slash) or real_path.startswith(temp_dir_slash) or real_path == "/repo" or real_path == "/shared"):
+    if not safe_path or not (safe_path.startswith("/repo/") or safe_path.startswith("/shared/") or safe_path.startswith(cwd_dir_slash) or safe_path.startswith(temp_dir_slash) or safe_path == "/repo" or safe_path == "/shared"):
         raise PermissionError("Unauthorized or unsafe file path")
 
-    import sys
-    import subprocess
+    open_target = safe_path
 
     try:
         if sys.platform == "win32":
-            os.startfile(real_path)
+            os.startfile(open_target)
         elif sys.platform == "darwin":
-            subprocess.run(["open", real_path], check=True)
+            subprocess.run(["open", open_target], check=True)
         else:
-            subprocess.run(["xdg-open", real_path], check=True)
+            subprocess.run(["xdg-open", open_target], check=True)
         return {"status": "success"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to open file: {str(e)}")
+    except Exception:
+        raise HTTPException(status_code=500, detail="Failed to open file")
 
 @app.get("/api/references")
 async def find_references(symbol_id: str, version: str, db: AsyncSession = Depends(get_db)):

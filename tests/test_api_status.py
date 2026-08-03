@@ -221,7 +221,7 @@ def test_get_repo_tree():
         app.dependency_overrides.clear()
 
 
-def test_get_graph_path_normalization_and_all_suffix_matching():
+def test_get_graph_path_normalization():
     client = TestClient(app)
 
     mock_db = MagicMock()
@@ -229,13 +229,11 @@ def test_get_graph_path_normalization_and_all_suffix_matching():
     mock_db.execute = mock_execute
 
     mock_nodes_result = MagicMock()
-    # Test path normalization on file field
     mock_nodes_result.mappings.return_value = [
         {"fqn": "starter_repo.plot_data.read_csv_data", "kind": "function", "file": "/tmp/codeintel_gn0t226s/starter_repo/plot_data.py"},
         {"fqn": "src.main.main", "kind": "function", "file": "/tmp/codeintel_4mtsyun5/src/main.py"}
     ]
     mock_edges_result = MagicMock()
-    # Test unqualified/partially-qualified symbol matching to fully-qualified name
     mock_edges_result.mappings.return_value = [
         {"from_fqn": "read_csv_data", "to_fqn": "main"}
     ]
@@ -248,7 +246,6 @@ def test_get_graph_path_normalization_and_all_suffix_matching():
     app.dependency_overrides[get_db] = override_get_db
 
     try:
-        # Test level=file path normalization and cross-run edge matching
         response = client.get("/graph?version=sha-123&level=file")
         assert response.status_code == 200
         data = response.json()
@@ -260,17 +257,93 @@ def test_get_graph_path_normalization_and_all_suffix_matching():
         assert data["edges"][0]["source"] == "file:starter_repo/plot_data.py"
         assert data["edges"][0]["target"] == "file:src/main.py"
 
-        # Reset execute mock to test level=all suffix matching
-        mock_execute.side_effect = [mock_nodes_result, mock_edges_result]
-        response2 = client.get("/graph?version=sha-123&level=all")
-        assert response2.status_code == 200
-        data2 = response2.json()
-        assert "nodes" in data2
-        assert "edges" in data2
-        # Edges should use resolved fully-qualified names
-        assert len(data2["edges"]) == 1
-        assert data2["edges"][0]["source"] == "starter_repo.plot_data.read_csv_data"
-        assert data2["edges"][0]["target"] == "src.main.main"
+    finally:
+        app.dependency_overrides.clear()
+
+def test_get_graph_suffix_resolution_all_level_unqualified_names():
+    client = TestClient(app)
+
+    mock_db = MagicMock()
+    mock_execute = AsyncMock()
+    mock_db.execute = mock_execute
+
+    mock_nodes_result = MagicMock()
+    mock_nodes_result.mappings.return_value = [
+        {"fqn": ".tmp.codeintel_abc.pkg.f1", "kind": "function", "file": "src/main.py"},
+        {"fqn": ".tmp.codeintel_abc.pkg.f2", "kind": "function", "file": "src/auth.py"}
+    ]
+    mock_edges_result = MagicMock()
+    mock_edges_result.mappings.return_value = [
+        {"from_fqn": "f1", "to_fqn": "f2"}  # Unqualified/partially-qualified caller & callee in edge DB
+    ]
+
+    mock_execute.side_effect = [mock_nodes_result, mock_edges_result]
+
+    async def override_get_db():
+        yield mock_db
+
+    app.dependency_overrides[get_db] = override_get_db
+
+    try:
+        response = client.get("/graph?version=sha-123&level=all")
+        assert response.status_code == 200
+        data = response.json()
+
+        # Both unqualified source and target should be mapped correctly to their full FQNs in db_nodes
+        assert "nodes" in data
+        assert "edges" in data
+        assert {n["id"] for n in data["nodes"]} == {".tmp.codeintel_abc.pkg.f1", ".tmp.codeintel_abc.pkg.f2"}
+        assert len(data["edges"]) == 1
+        assert data["edges"][0] == {
+            "source": ".tmp.codeintel_abc.pkg.f1",
+            "target": ".tmp.codeintel_abc.pkg.f2",
+            "type": "calls"
+        }
+
+    finally:
+        app.dependency_overrides.clear()
+
+def test_get_graph_suffix_resolution_all_level_with_focus_unqualified():
+    client = TestClient(app)
+
+    mock_db = MagicMock()
+    mock_execute = AsyncMock()
+    mock_db.execute = mock_execute
+
+    mock_nodes_result = MagicMock()
+    mock_nodes_result.mappings.return_value = [
+        {"fqn": ".tmp.codeintel_abc.pkg.f1", "kind": "function", "file": "src/main.py"},
+        {"fqn": ".tmp.codeintel_abc.pkg.f2", "kind": "function", "file": "src/auth.py"}
+    ]
+    mock_edges_result = MagicMock()
+    mock_edges_result.mappings.return_value = [
+        {"from_fqn": "f1", "to_fqn": "f2"}
+    ]
+
+    mock_execute.side_effect = [mock_nodes_result, mock_edges_result]
+
+    async def override_get_db():
+        yield mock_db
+
+    app.dependency_overrides[get_db] = override_get_db
+
+    try:
+        # User queries focus_symbol as a suffix: "f1"
+        response = client.get("/graph?version=sha-123&level=all&focus_symbol=f1")
+        assert response.status_code == 200
+        data = response.json()
+
+        # The unqualified focus_symbol suffix "f1" should be resolved to ".tmp.codeintel_abc.pkg.f1"
+        # and both nodes should be returned
+        assert "nodes" in data
+        assert "edges" in data
+        assert {n["id"] for n in data["nodes"]} == {".tmp.codeintel_abc.pkg.f1", ".tmp.codeintel_abc.pkg.f2"}
+        assert len(data["edges"]) == 1
+        assert data["edges"][0] == {
+            "source": ".tmp.codeintel_abc.pkg.f1",
+            "target": ".tmp.codeintel_abc.pkg.f2",
+            "type": "calls"
+        }
 
     finally:
         app.dependency_overrides.clear()
@@ -312,6 +385,19 @@ def test_open_editor():
         assert response.status_code == 200
         assert response.json()["status"] == "success"
         mock_startfile.assert_called_once_with(os.path.realpath("code_intel/api/server.py"))
+
+
+def test_open_editor_does_not_expose_raw_exception_details():
+    client = TestClient(app)
+
+    with patch("sys.platform", "win32"), \
+         patch("code_intel.api.server.is_safe_path", return_value=True), \
+         patch("os.startfile", create=True, side_effect=RuntimeError("secret-path-detail")):
+        response = client.post("/api/open-editor", json={"file_path": "code_intel/api/server.py"})
+
+    assert response.status_code == 500
+    assert response.json()["detail"] == "Failed to open file"
+    assert "secret-path-detail" not in response.text
 
 
 def test_find_references():

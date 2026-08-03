@@ -100,4 +100,14 @@ secrets.env
 data/*.db
 data/**/*.db
 
+# Local CodeQL artifacts
+.codeql/
+codeql-db/
+codeql-results.sarif
+*.sarif
+
 # Keep repository data/ and docs/ unless you want them ignored explicitly
+.tools/
+.tools/codeql
+.tools/codeql-linux64.zip
+.tools/codeql/codeql
