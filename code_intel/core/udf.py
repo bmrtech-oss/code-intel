@@ -1,7 +1,6 @@
 import json
 import os
 import re
-import httpx
 import logging
 from abc import ABC, abstractmethod
 from ollama import AsyncClient
@@ -113,6 +112,12 @@ class LLMUDF:
             self.model = LLM_MODEL
             self.api_key = LLM_API_KEY
 
+        # Self-healing Fallback for deprecated OpenRouter models (e.g. gpt-oss-120b)
+        if self.provider in ("openrouter", "openai"):
+            if "gpt-oss-120b" in self.model:
+                logging.warning(f"Model '{self.model}' is deprecated on OpenRouter. Falling back to 'google/gemini-2.5-flash:free' for stability.")
+                self.model = "google/gemini-2.5-flash:free"
+
         self.handler = get_handler(self.model)
 
         if self.provider == "ollama":
@@ -142,50 +147,81 @@ class LLMUDF:
                 options={"temperature": LLM_TEMPERATURE}
             )
             raw_text = response.response
-        elif self.provider == "openrouter":
-            async with httpx.AsyncClient() as client:
-                headers = {
-                    "Authorization": f"Bearer {self.api_key}",
-                    "HTTP-Referer": "https://github.com/code-intel/code-intel",
-                    "X-Title": "Code-Intel",
-                    "Content-Type": "application/json"
-                }
-                payload = {
-                    "model": self.model,
-                    "messages": [
-                        {"role": "system", "content": "You are a helpful assistant that outputs JSON."},
-                        {"role": "user", "content": prompt}
-                    ],
-                    "response_format": {"type": "json_object"},
-                    "temperature": LLM_TEMPERATURE
-                }
-                resp = await client.post(
-                    f"{self.base_url}/chat/completions",
-                    headers=headers,
-                    json=payload,
-                    timeout=60.0
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                raw_text = data["choices"][0]["message"]["content"]
-        elif self.provider == "google":
-            import google.generativeai as genai
-            # Gemini response generation (blocking in current SDK, ideally run in thread)
-            import asyncio
-            loop = asyncio.get_event_loop()
-
-            def _gen():
-                resp = self.google_client.generate_content(
-                    prompt,
-                    generation_config=genai.GenerationConfig(
-                        response_mime_type="application/json",
-                        response_schema=RequirementResponse.model_json_schema(),
-                        temperature=LLM_TEMPERATURE
+        elif self.provider in ("openrouter", "openai"):
+            try:
+                import httpx
+                async with httpx.AsyncClient() as client:
+                    headers = {
+                        "Authorization": f"Bearer {self.api_key}",
+                        "HTTP-Referer": "https://github.com/code-intel/code-intel",
+                        "X-Title": "Code-Intel",
+                        "Content-Type": "application/json"
+                    }
+                    payload = {
+                        "model": self.model,
+                        "messages": [
+                            {"role": "system", "content": "You are a helpful assistant that outputs JSON."},
+                            {"role": "user", "content": prompt}
+                        ],
+                        "response_format": {"type": "json_object"},
+                        "temperature": LLM_TEMPERATURE
+                    }
+                    resp = await client.post(
+                        f"{self.base_url}/chat/completions",
+                        headers=headers,
+                        json=payload,
+                        timeout=15.0 # Fallback fast on DNS/connection errors
                     )
-                )
-                return resp.text
+                    resp.raise_for_status()
+                    data = resp.json()
+                    raw_text = data["choices"][0]["message"]["content"]
+            except Exception as e:
+                logging.warning(f"Cloud LLM request failed ({e}). Falling back to local offline Ollama engine...")
+                self.provider = "ollama"
+                self.model = "phi3:mini"
+                from ..settings import OLLAMA_URL
+                self.ollama_client = AsyncClient(host=OLLAMA_URL)
 
-            raw_text = await loop.run_in_executor(None, _gen)
+                response = await self.ollama_client.generate(
+                    model=self.model,
+                    prompt=prompt,
+                    format=RequirementResponse.model_json_schema(),
+                    options={"temperature": LLM_TEMPERATURE}
+                )
+                raw_text = response.response
+        elif self.provider == "google":
+            try:
+                import google.generativeai as genai
+                # Gemini response generation (blocking in current SDK, ideally run in thread)
+                import asyncio
+                loop = asyncio.get_event_loop()
+
+                def _gen():
+                    resp = self.google_client.generate_content(
+                        prompt,
+                        generation_config=genai.GenerationConfig(
+                            response_mime_type="application/json",
+                            response_schema=RequirementResponse.model_json_schema(),
+                            temperature=LLM_TEMPERATURE
+                        )
+                    )
+                    return resp.text
+
+                raw_text = await loop.run_in_executor(None, _gen)
+            except Exception as e:
+                logging.warning(f"Cloud Gemini request failed ({e}). Falling back to local offline Ollama engine...")
+                self.provider = "ollama"
+                self.model = "phi3:mini"
+                from ..settings import OLLAMA_URL
+                self.ollama_client = AsyncClient(host=OLLAMA_URL)
+
+                response = await self.ollama_client.generate(
+                    model=self.model,
+                    prompt=prompt,
+                    format=RequirementResponse.model_json_schema(),
+                    options={"temperature": LLM_TEMPERATURE}
+                )
+                raw_text = response.response
 
         parsed = self.handler.parse_response(raw_text)
 

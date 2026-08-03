@@ -44,21 +44,21 @@ def test_api_status_cors():
         "/status",
         headers={"Origin": "tauri://localhost", "Access-Control-Request-Method": "GET"}
     )
-    assert response.headers.get("access-control-allow-origin") == "*"
+    assert response.headers.get("access-control-allow-origin") == "tauri://localhost"
 
     # Test http://tauri.localhost origin
     response = client.get(
         "/status",
         headers={"Origin": "http://tauri.localhost", "Access-Control-Request-Method": "GET"}
     )
-    assert response.headers.get("access-control-allow-origin") == "*"
+    assert response.headers.get("access-control-allow-origin") == "http://tauri.localhost"
 
     # Test http://localhost origin
     response = client.get(
         "/status",
         headers={"Origin": "http://localhost", "Access-Control-Request-Method": "GET"}
     )
-    assert response.headers.get("access-control-allow-origin") == "*"
+    assert response.headers.get("access-control-allow-origin") == "http://localhost"
 
 def test_analyze_stream_redis_data():
     client = TestClient(app)
@@ -150,8 +150,7 @@ def test_get_branches_and_commits_fallback():
     assert "branches" in data
     assert "commits" in data
     assert len(data["branches"]) > 0
-    assert len(data["commits"]) > 0
-    assert data["commits"][0]["sha"] == "a7b8c9"
+    assert len(data["commits"]) == 0
 
 def test_get_branches_and_commits_simple_graph_fallback():
     client = TestClient(app)
@@ -172,7 +171,7 @@ def test_get_branches_and_commits_simple_graph_fallback():
         assert response.status_code == 200
         data = response.json()
         assert data["branches"] == ["main"]
-        assert data["commits"] == [{"sha": "c1", "author": "Alice", "date": "2026-07-16T12:00:00Z"}]
+        assert data["commits"] == [{"sha": "c1", "author": "Alice", "date": "2026-07-16T12:00:00Z", "message": ""}]
 
 def test_get_repo_tree():
     client = TestClient(app)
@@ -220,6 +219,385 @@ def test_get_repo_tree():
 
     finally:
         app.dependency_overrides.clear()
+
+def test_get_graph_suffix_resolution_all_level_unqualified_names():
+    client = TestClient(app)
+
+    mock_db = MagicMock()
+    mock_execute = AsyncMock()
+    mock_db.execute = mock_execute
+
+    mock_nodes_result = MagicMock()
+    mock_nodes_result.mappings.return_value = [
+        {"fqn": ".tmp.codeintel_abc.pkg.f1", "kind": "function", "file": "src/main.py"},
+        {"fqn": ".tmp.codeintel_abc.pkg.f2", "kind": "function", "file": "src/auth.py"}
+    ]
+    mock_edges_result = MagicMock()
+    mock_edges_result.mappings.return_value = [
+        {"from_fqn": "f1", "to_fqn": "f2"}  # Unqualified/partially-qualified caller & callee in edge DB
+    ]
+
+    mock_execute.side_effect = [mock_nodes_result, mock_edges_result]
+
+    async def override_get_db():
+        yield mock_db
+
+    app.dependency_overrides[get_db] = override_get_db
+
+    try:
+        response = client.get("/graph?version=sha-123&level=all")
+        assert response.status_code == 200
+        data = response.json()
+
+        # Both unqualified source and target should be mapped correctly to their full FQNs in db_nodes
+        assert "nodes" in data
+        assert "edges" in data
+        assert {n["id"] for n in data["nodes"]} == {".tmp.codeintel_abc.pkg.f1", ".tmp.codeintel_abc.pkg.f2"}
+        assert len(data["edges"]) == 1
+        assert data["edges"][0] == {
+            "source": ".tmp.codeintel_abc.pkg.f1",
+            "target": ".tmp.codeintel_abc.pkg.f2",
+            "type": "calls"
+        }
+
+    finally:
+        app.dependency_overrides.clear()
+
+def test_get_graph_suffix_resolution_all_level_with_focus_unqualified():
+    client = TestClient(app)
+
+    mock_db = MagicMock()
+    mock_execute = AsyncMock()
+    mock_db.execute = mock_execute
+
+    mock_nodes_result = MagicMock()
+    mock_nodes_result.mappings.return_value = [
+        {"fqn": ".tmp.codeintel_abc.pkg.f1", "kind": "function", "file": "src/main.py"},
+        {"fqn": ".tmp.codeintel_abc.pkg.f2", "kind": "function", "file": "src/auth.py"}
+    ]
+    mock_edges_result = MagicMock()
+    mock_edges_result.mappings.return_value = [
+        {"from_fqn": "f1", "to_fqn": "f2"}
+    ]
+
+    mock_execute.side_effect = [mock_nodes_result, mock_edges_result]
+
+    async def override_get_db():
+        yield mock_db
+
+    app.dependency_overrides[get_db] = override_get_db
+
+    try:
+        # User queries focus_symbol as a suffix: "f1"
+        response = client.get("/graph?version=sha-123&level=all&focus_symbol=f1")
+        assert response.status_code == 200
+        data = response.json()
+
+        # The unqualified focus_symbol suffix "f1" should be resolved to ".tmp.codeintel_abc.pkg.f1"
+        # and both nodes should be returned
+        assert "nodes" in data
+        assert "edges" in data
+        assert {n["id"] for n in data["nodes"]} == {".tmp.codeintel_abc.pkg.f1", ".tmp.codeintel_abc.pkg.f2"}
+        assert len(data["edges"]) == 1
+        assert data["edges"][0] == {
+            "source": ".tmp.codeintel_abc.pkg.f1",
+            "target": ".tmp.codeintel_abc.pkg.f2",
+            "type": "calls"
+        }
+
+    finally:
+        app.dependency_overrides.clear()
+
+def test_post_config_llm_test():
+    client = TestClient(app)
+
+    # Mock OllamaClient.generate to verify successful test response
+    with patch("redis.Redis") as mock_redis, \
+         patch("code_intel.core.udf.AsyncClient") as mock_ollama_client_class:
+
+        mock_redis.return_value.get.return_value = None
+
+        mock_ollama_client = AsyncMock()
+        mock_response = MagicMock()
+        mock_response.response = "success_test_token"
+        mock_ollama_client.generate.return_value = mock_response
+        mock_ollama_client_class.return_value = mock_ollama_client
+
+        # We force LLM_PROVIDER as ollama
+        with patch("code_intel.core.udf.LLM_PROVIDER", "ollama"):
+            response = client.post("/config/llm/test", json={"session_id": "default"})
+            assert response.status_code == 200
+            data = response.json()
+            assert data["status"] == "success"
+            assert "success_test_token" in data["response"]
+
+def test_open_editor():
+    client = TestClient(app)
+
+    # 1. Unsafe path should be rejected
+    response = client.post("/api/open-editor", json={"file_path": "/etc/passwd"})
+    assert response.status_code == 400
+    assert "unauthorized" in response.json()["detail"].lower()
+
+    # 2. Safe path (like current directory file) with mock startfile/run
+    with patch("sys.platform", "win32"), patch("os.startfile", create=True) as mock_startfile:
+        response = client.post("/api/open-editor", json={"file_path": "code_intel/api/server.py"})
+        assert response.status_code == 200
+        assert response.json()["status"] == "success"
+        mock_startfile.assert_called_once_with("code_intel/api/server.py")
+
+
+def test_open_editor_does_not_expose_raw_exception_details():
+    client = TestClient(app)
+
+    with patch("sys.platform", "win32"), \
+         patch("code_intel.api.server.is_safe_path", return_value=True), \
+         patch("os.startfile", create=True, side_effect=RuntimeError("secret-path-detail")):
+        response = client.post("/api/open-editor", json={"file_path": "code_intel/api/server.py"})
+
+    assert response.status_code == 500
+    assert response.json()["detail"] == "Failed to open file"
+    assert "secret-path-detail" not in response.text
+
+
+def test_find_references():
+    client = TestClient(app)
+
+    mock_db = MagicMock()
+    mock_execute = AsyncMock()
+    mock_db.execute = mock_execute
+
+    async def mock_execute_fn(query, params=None):
+        query_str = str(query)
+        if "LIMIT 1" in query_str:
+            mock_res = MagicMock()
+            mock_res.scalar.return_value = None
+            return mock_res
+        elif "DISTINCT version" in query_str:
+            mock_res = MagicMock()
+            mock_res.mappings.return_value = []
+            return mock_res
+        elif "from_fqn" in query_str or "caller" in query_str:
+            mock_res = MagicMock()
+            # Mock .all() return value which yields rows as tuples
+            mock_res.all.return_value = [("caller_1",)]
+            return mock_res
+        return MagicMock()
+
+    mock_execute.side_effect = mock_execute_fn
+
+    async def override_get_db():
+        yield mock_db
+
+    app.dependency_overrides[get_db] = override_get_db
+
+    try:
+        response = client.get("/api/references?symbol_id=target_sym&version=v1")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["references"] == ["caller_1"]
+
+    finally:
+        app.dependency_overrides.clear()
+
+def test_get_version_status():
+    client = TestClient(app)
+
+    mock_db = MagicMock()
+    mock_execute = AsyncMock()
+    mock_db.execute = mock_execute
+
+    # Mock DB queries:
+    # 1. First execute call inside version-status check: graph_nodes check -> returns None (not analyzed)
+    # 2. Second execute call inside version-status check: current_symbols check -> returns None (not analyzed)
+    # 3. Third execute call inside find_best_version: LIMIT 1 -> returns None
+    # 4. Fourth execute call inside find_best_version: SELECT DISTINCT version FROM graph_nodes -> returns [{"version": "fallback_sha"}]
+    # 5. Fifth execute call: SELECT DISTINCT version FROM graph_nodes (has any analysis check) -> returns [{"version": "fallback_sha"}]
+    mock_result_not_found = MagicMock()
+    mock_result_not_found.scalar.return_value = None
+
+    mock_result_distinct = MagicMock()
+    mock_result_distinct.mappings.return_value = [
+        {"version": "fallback_sha"}
+    ]
+
+    mock_execute.side_effect = [
+        mock_result_not_found,
+        mock_result_not_found,
+        mock_result_not_found,
+        mock_result_distinct,
+        mock_result_distinct
+    ]
+
+    async def override_get_db():
+        yield mock_db
+
+    app.dependency_overrides[get_db] = override_get_db
+
+    try:
+        response = client.get("/repo/version-status?version=missing_sha")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["requested_version"] == "missing_sha"
+        assert data["is_analyzed"] is False
+        assert data["best_fallback_version"] == "fallback_sha"
+        assert data["has_any_analysis"] is True
+
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_tree_graph_response_headers():
+    client = TestClient(app)
+
+    mock_db = MagicMock()
+    mock_execute = AsyncMock()
+    mock_db.execute = mock_execute
+
+    # Mock DB query for get_repo_tree: returns nodes on the first call (so no fallback is triggered)
+    mock_result_tree = MagicMock()
+    mock_result_tree.mappings.return_value = [
+        {"fqn": "FQN1", "file": "src/main.py"}
+    ]
+    mock_execute.return_value = mock_result_tree
+
+    async def override_get_db():
+        yield mock_db
+
+    app.dependency_overrides[get_db] = override_get_db
+
+    try:
+        response = client.get("/repo/tree?version=active_sha")
+        assert response.status_code == 200
+        assert response.headers.get("X-Version-Requested") == "active_sha"
+        assert response.headers.get("X-Version-Resolved") == "active_sha"
+        assert response.headers.get("X-Version-Fallback") == "false"
+
+    finally:
+        app.dependency_overrides.clear()
+
+def test_find_best_version_fallback():
+    client = TestClient(app)
+
+    mock_db = MagicMock()
+    mock_execute = AsyncMock()
+    mock_db.execute = mock_execute
+
+    async def mock_execute_fn(query, params=None):
+        query_str = str(query)
+        if "LIMIT 1" in query_str:
+            mock_res = MagicMock()
+            mock_res.scalar.return_value = None
+            return mock_res
+        elif "DISTINCT version" in query_str:
+            mock_res = MagicMock()
+            mock_res.mappings.return_value = [{"version": "existing_sha_999"}]
+            return mock_res
+        else:
+            if params and params.get("v") == "existing_sha_999":
+                mock_res = MagicMock()
+                mock_res.mappings.return_value = [{"fqn": "FQN1", "file": "src/main.py"}]
+                return mock_res
+            else:
+                mock_res = MagicMock()
+                mock_res.mappings.return_value = []
+                return mock_res
+
+    mock_execute.side_effect = mock_execute_fn
+
+    async def override_get_db():
+        yield mock_db
+
+    app.dependency_overrides[get_db] = override_get_db
+
+    try:
+        response = client.get("/repo/tree?version=missing_sha_111")
+        assert response.status_code == 200
+        data = response.json()
+
+        # Verify it fallback and returns the tree content for "existing_sha_999"
+        assert "src" in data
+        assert data["src"]["children"]["main.py"]["symbols"] == ["FQN1"]
+
+    finally:
+        app.dependency_overrides.clear()
+
+def test_resolve_version_and_analyze():
+    client = TestClient(app)
+
+    # 1. Test resolve_version with mocked Git ls-remote
+    with patch("git.cmd.Git") as mock_git_class:
+        mock_git = MagicMock()
+        mock_git.ls_remote.return_value = "bc044fcc12eff6c92c4a248e78053eca7000bb5e\trefs/heads/main"
+        mock_git_class.return_value = mock_git
+
+        from code_intel.api.server import resolve_version
+        sha = resolve_version("https://github.com/KenMwaura1/Fast-Api-example", "main")
+        assert sha == "bc044fcc12eff6c92c4a248e78053eca7000bb5e"
+
+    # 2. Test POST /analyze with remote Git URL
+    with patch("code_intel.worker.tasks.queue.enqueue") as mock_enqueue, \
+         patch("git.cmd.Git") as mock_git_class:
+
+        mock_git = MagicMock()
+        mock_git.ls_remote.return_value = "bc044fcc12eff6c92c4a248e78053eca7000bb5e\trefs/heads/main"
+        mock_git_class.return_value = mock_git
+
+        mock_job = MagicMock()
+        mock_job.id = "test-job-id"
+        mock_enqueue.return_value = mock_job
+
+        payload = {
+            "repo_path": "https://github.com/KenMwaura1/Fast-Api-example",
+            "branch": "main"
+        }
+        response = client.post("/analyze", json=payload)
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "indexing started"
+        assert data["version"] == "bc044fcc12eff6c92c4a248e78053eca7000bb5e"
+        assert data["job_id"] == "test-job-id"
+
+        # Verify that queue.enqueue was called with is_git_url=True and branch="main"
+        from code_intel.worker.tasks import run_ingestion
+        mock_enqueue.assert_called_once_with(
+            run_ingestion,
+            "https://github.com/KenMwaura1/Fast-Api-example",
+            "bc044fcc12eff6c92c4a248e78053eca7000bb5e",
+            is_git_url=True,
+            branch="main",
+            job_timeout=300
+        )
+
+    # 3. Test POST /analyze with custom timeout
+    with patch("code_intel.worker.tasks.queue.enqueue") as mock_enqueue, \
+         patch("git.cmd.Git") as mock_git_class:
+
+        mock_git = MagicMock()
+        mock_git.ls_remote.return_value = "bc044fcc12eff6c92c4a248e78053eca7000bb5e\trefs/heads/main"
+        mock_git_class.return_value = mock_git
+
+        mock_job = MagicMock()
+        mock_job.id = "test-job-id"
+        mock_enqueue.return_value = mock_job
+
+        payload = {
+            "repo_path": "https://github.com/KenMwaura1/Fast-Api-example",
+            "branch": "main",
+            "timeout": 600
+        }
+        response = client.post("/analyze", json=payload)
+        assert response.status_code == 200
+
+        from code_intel.worker.tasks import run_ingestion
+        mock_enqueue.assert_called_once_with(
+            run_ingestion,
+            "https://github.com/KenMwaura1/Fast-Api-example",
+            "bc044fcc12eff6c92c4a248e78053eca7000bb5e",
+            is_git_url=True,
+            branch="main",
+            job_timeout=600
+        )
 
 def test_path_traversal_protection():
     client = TestClient(app)

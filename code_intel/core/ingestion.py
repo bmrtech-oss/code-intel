@@ -49,7 +49,7 @@ class IngestionPipeline:
                 except Exception as e:
                     print(f"Error updating progress in Redis: {e}")
 
-            await self.parse_file(full_path, version)
+            await self.parse_file(full_path, version, root_path=root_path)
 
         if job_id and r:
             try:
@@ -65,10 +65,10 @@ class IngestionPipeline:
             except Exception as e:
                 print(f"Error updating final progress in Redis: {e}")
 
-    async def parse_file(self, file_path: str, version: str):
+    async def parse_file(self, file_path: str, version: str, root_path: str = None):
         ext = os.path.splitext(file_path)[1].lower()
         if ext == ".py":
-            visitor = PythonVisitor(self.storage, file_path, version)
+            visitor = PythonVisitor(self.storage, file_path, version, root_path=root_path)
         elif ext == ".java":
             visitor = JavaVisitor(self.storage, file_path, version)
         elif ext in (".cob", ".cbl", ".cobol"):
