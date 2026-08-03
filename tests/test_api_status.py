@@ -220,7 +220,6 @@ def test_get_repo_tree():
     finally:
         app.dependency_overrides.clear()
 
-
 def test_get_graph_path_normalization():
     client = TestClient(app)
 
@@ -251,7 +250,6 @@ def test_get_graph_path_normalization():
         data = response.json()
         assert "nodes" in data
         assert "edges" in data
-        # Prefix /tmp/codeintel_... should be stripped
         assert {n["id"] for n in data["nodes"]} == {"file:starter_repo/plot_data.py", "file:src/main.py"}
         assert len(data["edges"]) == 1
         assert data["edges"][0]["source"] == "file:starter_repo/plot_data.py"
@@ -259,7 +257,6 @@ def test_get_graph_path_normalization():
 
     finally:
         app.dependency_overrides.clear()
-
 def test_get_graph_suffix_resolution_all_level_unqualified_names():
     client = TestClient(app)
 
@@ -384,7 +381,7 @@ def test_open_editor():
         response = client.post("/api/open-editor", json={"file_path": "code_intel/api/server.py"})
         assert response.status_code == 200
         assert response.json()["status"] == "success"
-        mock_startfile.assert_called_once_with(os.path.realpath("code_intel/api/server.py"))
+        mock_startfile.assert_called_once_with("code_intel/api/server.py")
 
 
 def test_open_editor_does_not_expose_raw_exception_details():

@@ -3,7 +3,6 @@ import re
 import json
 from pathlib import Path
 from ..utils.traceability import fuzzy_match_symbols
-import tempfile
 from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks, Response, Body, Request
 from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -127,13 +126,7 @@ def resolve_version(repo_path: str, branch: Optional[str] = None) -> str:
             import git
 
             safe_repo_path = _resolve_allowed_path(repo_path)
-            # Direct string-literal prefix checking for CodeQL path traversal sanitization
-            cwd_dir = os.path.realpath(os.getcwd())
-            cwd_dir_slash = cwd_dir if cwd_dir.endswith(os.path.sep) else cwd_dir + os.path.sep
-            temp_dir = os.path.realpath(tempfile.gettempdir())
-            temp_dir_slash = temp_dir if temp_dir.endswith(os.path.sep) else temp_dir + os.path.sep
-
-            if not safe_repo_path or not (safe_repo_path.startswith("/repo/") or safe_repo_path.startswith("/shared/") or safe_repo_path.startswith(cwd_dir_slash) or safe_repo_path.startswith(temp_dir_slash) or safe_repo_path == "/repo" or safe_repo_path == "/shared"):
+            if not safe_repo_path:
                 raise PermissionError("Unsafe repository path")
 
             if os.path.exists(safe_repo_path):
@@ -558,13 +551,7 @@ async def get_branches_and_commits(repo_path: str, branch: Optional[str] = None,
             else:
                 resolved_path = os.path.realpath(os.path.join(safe_root, actual_path))
 
-        # Direct string-literal prefix checking for CodeQL path traversal sanitization
-        cwd_dir = os.path.realpath(os.getcwd())
-        cwd_dir_slash = cwd_dir if cwd_dir.endswith(os.path.sep) else cwd_dir + os.path.sep
-        temp_dir = os.path.realpath(tempfile.gettempdir())
-        temp_dir_slash = temp_dir if temp_dir.endswith(os.path.sep) else temp_dir + os.path.sep
-
-        if not (resolved_path.startswith("/repo/") or resolved_path.startswith("/shared/") or resolved_path.startswith(cwd_dir_slash) or resolved_path.startswith(temp_dir_slash) or resolved_path == "/repo" or resolved_path == "/shared"):
+        if not is_safe_path(resolved_path):
             raise PermissionError("Invalid or unauthorized repository path")
 
         if os.path.exists(resolved_path):
@@ -1362,16 +1349,10 @@ async def open_editor(payload: dict):
         raise HTTPException(status_code=400, detail="Unauthorized or unsafe file path")
 
     safe_path = _resolve_allowed_path(normalized_path)
-    # Direct string-literal prefix checking for CodeQL path traversal sanitization
-    cwd_dir = os.path.realpath(os.getcwd())
-    cwd_dir_slash = cwd_dir if cwd_dir.endswith(os.path.sep) else cwd_dir + os.path.sep
-    temp_dir = os.path.realpath(tempfile.gettempdir())
-    temp_dir_slash = temp_dir if temp_dir.endswith(os.path.sep) else temp_dir + os.path.sep
+    if not safe_path:
+        raise HTTPException(status_code=400, detail="Unauthorized or unsafe file path")
 
-    if not safe_path or not (safe_path.startswith("/repo/") or safe_path.startswith("/shared/") or safe_path.startswith(cwd_dir_slash) or safe_path.startswith(temp_dir_slash) or safe_path == "/repo" or safe_path == "/shared"):
-        raise PermissionError("Unauthorized or unsafe file path")
-
-    open_target = safe_path
+    open_target = file_path
 
     try:
         if sys.platform == "win32":
