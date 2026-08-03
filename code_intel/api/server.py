@@ -1324,12 +1324,20 @@ async def get_provenance(fact_id: int, db: AsyncSession = Depends(get_db)):
 @app.post("/api/open-editor")
 async def open_editor(payload: dict):
     file_path = payload.get("file_path")
-    if not file_path:
+    if not isinstance(file_path, str) or not file_path.strip():
         raise HTTPException(status_code=400, detail="Missing file_path")
+
+    file_path = file_path.strip()
 
     # Strip file: prefix if present
     if file_path.startswith("file:"):
         file_path = file_path[5:]
+
+    if "\x00" in file_path:
+        raise HTTPException(status_code=400, detail="Invalid file_path")
+
+    if not os.path.isabs(file_path):
+        raise HTTPException(status_code=400, detail="file_path must be an absolute path")
 
     abs_path = os.path.abspath(file_path)
     real_path = os.path.realpath(abs_path)
@@ -1352,7 +1360,7 @@ async def open_editor(payload: dict):
             continue
 
     if not is_allowed:
-        raise PermissionError("Unauthorized or unsafe file path")
+        raise HTTPException(status_code=403, detail="Unauthorized or unsafe file path")
 
     if not os.path.isfile(real_path):
         raise HTTPException(status_code=400, detail="Path must be an existing file")
