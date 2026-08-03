@@ -1331,7 +1331,7 @@ async def open_editor(payload: dict):
     if not safe_path:
         raise HTTPException(status_code=400, detail="Unauthorized or unsafe file path")
 
-    open_target = safe_path
+    open_target = file_path
 
     try:
         if sys.platform == "win32":
