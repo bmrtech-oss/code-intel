@@ -89,12 +89,21 @@ def resolve_version(repo_path: str, branch: Optional[str] = None) -> str:
             real_path = os.path.realpath(abs_path)
 
             cwd_dir = os.path.realpath(os.getcwd())
-            cwd_dir_slash = cwd_dir if cwd_dir.endswith(os.path.sep) else cwd_dir + os.path.sep
             temp_dir = os.path.realpath(tempfile.gettempdir())
-            temp_dir_slash = temp_dir if temp_dir.endswith(os.path.sep) else temp_dir + os.path.sep
 
-            # Direct string-literal prefix checking for CodeQL path traversal sanitization
-            if not (real_path.startswith("/repo/") or real_path.startswith("/shared/") or real_path.startswith(cwd_dir_slash) or real_path.startswith(temp_dir_slash) or real_path == "/repo" or real_path == "/shared"):
+            trusted_roots = [
+                os.path.realpath("/repo"),
+                os.path.realpath("/shared"),
+                cwd_dir,
+                temp_dir,
+            ]
+
+            # Canonical containment check to prevent path traversal
+            is_allowed = any(
+                os.path.commonpath([real_path, root]) == root
+                for root in trusted_roots
+            )
+            if not is_allowed:
                 raise PermissionError("Unsafe repository path")
 
             if os.path.exists(real_path):
