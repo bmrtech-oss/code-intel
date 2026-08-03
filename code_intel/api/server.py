@@ -1,6 +1,7 @@
 import os
 import re
 import json
+import tempfile
 from ..utils.traceability import fuzzy_match_symbols
 from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks, Response, Body, Request
 from fastapi.responses import StreamingResponse, JSONResponse
@@ -87,29 +88,14 @@ def resolve_version(repo_path: str, branch: Optional[str] = None) -> str:
             abs_path = os.path.abspath(repo_path)
             real_path = os.path.realpath(abs_path)
 
-            # Security Sanitizer: Prevent path injection/traversal
-            # Explicit string-literal checking for CodeQL compliance
-            is_valid = False
+            cwd_dir = os.path.realpath(os.getcwd())
+            cwd_dir_slash = cwd_dir if cwd_dir.endswith(os.path.sep) else cwd_dir + os.path.sep
+            temp_dir = os.path.realpath(tempfile.gettempdir())
+            temp_dir_slash = temp_dir if temp_dir.endswith(os.path.sep) else temp_dir + os.path.sep
 
-            # Check absolute literal prefixes
-            if real_path == "/repo" or real_path.startswith("/repo/"):
-                is_valid = True
-            elif real_path == "/shared" or real_path.startswith("/shared/"):
-                is_valid = True
-            else:
-                # Resolve active working directory and temp directory safely
-                cwd_dir = os.path.realpath(os.getcwd())
-                cwd_dir_slash = cwd_dir if cwd_dir.endswith(os.path.sep) else cwd_dir + os.path.sep
-                temp_dir = os.path.realpath(tempfile.gettempdir())
-                temp_dir_slash = temp_dir if temp_dir.endswith(os.path.sep) else temp_dir + os.path.sep
-
-                if real_path == cwd_dir or real_path.startswith(cwd_dir_slash):
-                    is_valid = True
-                elif real_path == temp_dir or real_path.startswith(temp_dir_slash):
-                    is_valid = True
-
-            if not is_valid:
-                return str(int(datetime.utcnow().timestamp()))
+            # Direct string-literal prefix checking for CodeQL path traversal sanitization
+            if not (real_path.startswith("/repo/") or real_path.startswith("/shared/") or real_path.startswith(cwd_dir_slash) or real_path.startswith(temp_dir_slash) or real_path == "/repo" or real_path == "/shared"):
+                raise PermissionError("Unsafe repository path")
 
             if os.path.exists(real_path):
                 repo = git.Repo(real_path)
@@ -554,8 +540,14 @@ async def get_branches_and_commits(repo_path: str, branch: Optional[str] = None,
             else:
                 resolved_path = os.path.realpath(os.path.join(safe_root, actual_path))
 
-        if not is_safe_path(resolved_path):
-            raise HTTPException(status_code=400, detail="Invalid or unauthorized repository path")
+        # Direct string-literal prefix checking for CodeQL path traversal sanitization
+        cwd_dir = os.path.realpath(os.getcwd())
+        cwd_dir_slash = cwd_dir if cwd_dir.endswith(os.path.sep) else cwd_dir + os.path.sep
+        temp_dir = os.path.realpath(tempfile.gettempdir())
+        temp_dir_slash = temp_dir if temp_dir.endswith(os.path.sep) else temp_dir + os.path.sep
+
+        if not (resolved_path.startswith("/repo/") or resolved_path.startswith("/shared/") or resolved_path.startswith(cwd_dir_slash) or resolved_path.startswith(temp_dir_slash) or resolved_path == "/repo" or resolved_path == "/shared"):
+            raise PermissionError("Invalid or unauthorized repository path")
 
         if os.path.exists(resolved_path):
             repo = git.Repo(resolved_path)
@@ -1330,21 +1322,28 @@ async def open_editor(payload: dict):
     if file_path.startswith("file:"):
         file_path = file_path[5:]
 
-    # Security Check: Prevent directory traversal or arbitrary file handling
-    if not is_safe_path(file_path):
+    abs_path = os.path.abspath(file_path)
+    real_path = os.path.realpath(abs_path)
+
+    # Direct string-literal prefix checking for CodeQL path traversal sanitization
+    cwd_dir = os.path.realpath(os.getcwd())
+    cwd_dir_slash = cwd_dir if cwd_dir.endswith(os.path.sep) else cwd_dir + os.path.sep
+    temp_dir = os.path.realpath(tempfile.gettempdir())
+    temp_dir_slash = temp_dir if temp_dir.endswith(os.path.sep) else temp_dir + os.path.sep
+
+    if not (real_path.startswith("/repo/") or real_path.startswith("/shared/") or real_path.startswith(cwd_dir_slash) or real_path.startswith(temp_dir_slash) or real_path == "/repo" or real_path == "/shared"):
         raise PermissionError("Unauthorized or unsafe file path")
 
     import sys
     import subprocess
-    import os
 
     try:
         if sys.platform == "win32":
-            os.startfile(file_path)
+            os.startfile(real_path)
         elif sys.platform == "darwin":
-            subprocess.run(["open", file_path], check=True)
+            subprocess.run(["open", real_path], check=True)
         else:
-            subprocess.run(["xdg-open", file_path], check=True)
+            subprocess.run(["xdg-open", real_path], check=True)
         return {"status": "success"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to open file: {str(e)}")

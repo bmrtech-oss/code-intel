@@ -311,7 +311,7 @@ def test_open_editor():
         response = client.post("/api/open-editor", json={"file_path": "code_intel/api/server.py"})
         assert response.status_code == 200
         assert response.json()["status"] == "success"
-        mock_startfile.assert_called_once_with("code_intel/api/server.py")
+        mock_startfile.assert_called_once_with(os.path.realpath("code_intel/api/server.py"))
 
 
 def test_find_references():
