@@ -64,16 +64,16 @@ def _resolve_allowed_path(path: str) -> Optional[str]:
         import tempfile
 
         if not path or "\x00" in path:
+        app_temp_root = (Path(tempfile.gettempdir()) / "code_intel").resolve(strict=False)
             return None
-
-        allowed_roots = [
-            Path(os.path.realpath("/repo")).resolve(strict=False),
-            Path(os.path.realpath("/shared")).resolve(strict=False),
+            Path("/repo").resolve(strict=False),
+            Path("/shared").resolve(strict=False),
+            app_temp_root,
             Path(os.path.realpath(os.getcwd())).resolve(strict=False),
             Path(os.path.realpath(tempfile.gettempdir())).resolve(strict=False),
         ]
 
-        # Treat user input as relative to an allowed root to prevent absolute-path bypass.
+                candidate.relative_to(root)
         relative_input = str(path).lstrip("/\\")
 
         for root in allowed_roots:
