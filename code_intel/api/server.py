@@ -2,8 +2,8 @@ import os
 import re
 import json
 from ..utils.traceability import fuzzy_match_symbols
-from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks, Response, Body
-from fastapi.responses import StreamingResponse
+from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks, Response, Body, Request
+from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, List
@@ -20,6 +20,13 @@ from ..worker.tasks import queue, llm_queue, run_ingestion, generate_requirement
 from ..settings import ALLOWED_ORIGINS
 
 app = FastAPI(title="Code Intelligence Platform (Prod)", version="1.0.0")
+
+@app.exception_handler(PermissionError)
+async def permission_error_handler(request: Request, exc: PermissionError):
+    return JSONResponse(
+        status_code=400,
+        content={"detail": str(exc)},
+    )
 
 origins = list(ALLOWED_ORIGINS)
 common_origins = [
@@ -462,9 +469,11 @@ async def test_llm_connection(req: Optional[TestLLMRequest] = Body(None)):
             "response": text_resp.strip()
         }
     except Exception as e:
+        import logging
+        logging.error(f"LLM connection check failed: {e}", exc_info=True)
         return {
             "status": "failed",
-            "error": str(e),
+            "error": "LLM connection verification failed. Please check your credentials and configuration.",
             "provider": udf.provider,
             "model": udf.model
         }
@@ -1223,8 +1232,10 @@ async def requirements_stream(req: Optional[RequirementsRequest] = Body(None), v
 
             yield f"data: {json.dumps({'done': True, 'traceability_stored': traceability_stored})}\n\n"
         except Exception as e:
+            import logging
+            logging.error(f"LLM Generation failed: {e}", exc_info=True)
             error_payload = {
-                "error": f"LLM Generation failed: {str(e)}",
+                "error": "LLM Generation failed. Please check server logs for details.",
                 "done": True
             }
             yield f"data: {json.dumps(error_payload)}\n\n"
@@ -1238,8 +1249,6 @@ async def requirements(req: Optional[RequirementsRequest] = Body(None), version:
     if not version:
         raise HTTPException(status_code=400, detail="No version found")
     
-    # We pass the list of focused symbol_ids to the task if requested
-    symbol_ids = req.symbol_ids if req else None
     job = llm_queue.enqueue(generate_requirements_task, version, session_id)
     return {"job_id": job.id, "status": "pending"}
 
@@ -1323,7 +1332,7 @@ async def open_editor(payload: dict):
 
     # Security Check: Prevent directory traversal or arbitrary file handling
     if not is_safe_path(file_path):
-        raise HTTPException(status_code=400, detail="Unauthorized or unsafe file path")
+        raise PermissionError("Unauthorized or unsafe file path")
 
     import sys
     import subprocess

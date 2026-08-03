@@ -1,7 +1,6 @@
 import json
 import os
 import re
-import httpx
 import logging
 from abc import ABC, abstractmethod
 from ollama import AsyncClient
