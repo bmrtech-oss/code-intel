@@ -347,6 +347,19 @@ def test_open_editor():
         mock_startfile.assert_called_once_with("code_intel/api/server.py")
 
 
+def test_open_editor_does_not_expose_raw_exception_details():
+    client = TestClient(app)
+
+    with patch("sys.platform", "win32"), \
+         patch("code_intel.api.server.is_safe_path", return_value=True), \
+         patch("os.startfile", side_effect=RuntimeError("secret-path-detail")):
+        response = client.post("/api/open-editor", json={"file_path": "code_intel/api/server.py"})
+
+    assert response.status_code == 500
+    assert response.json()["detail"] == "Failed to open file"
+    assert "secret-path-detail" not in response.text
+
+
 def test_find_references():
     client = TestClient(app)
 

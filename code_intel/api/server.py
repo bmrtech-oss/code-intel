@@ -57,6 +57,34 @@ def is_git_url(path: str) -> bool:
     """Check if the path is a Git repository URL."""
     return bool(re.match(r'^(https?://|git@)', path))
 
+def _is_within_allowed_root(path: str) -> bool:
+    """Return True when the resolved path stays under an allowed root directory."""
+    try:
+        import tempfile
+
+        abs_path = os.path.abspath(path)
+        real_path = os.path.realpath(abs_path)
+
+        allowed_roots = []
+        for candidate in ("/repo", "/shared"):
+            allowed_roots.append(os.path.realpath(candidate))
+
+        cwd_dir = os.path.realpath(os.getcwd())
+        temp_dir = os.path.realpath(tempfile.gettempdir())
+        allowed_roots.extend([cwd_dir, temp_dir])
+
+        for root in allowed_roots:
+            if not root:
+                continue
+            root_path = root if root.endswith(os.path.sep) else root + os.path.sep
+            if real_path == root or real_path.startswith(root_path):
+                return True
+
+        return False
+    except Exception:
+        return False
+
+
 def resolve_version(repo_path: str, branch: Optional[str] = None) -> str:
     """Resolve the latest commit SHA for a remote Git URL or a local Git repo."""
     if is_git_url(repo_path):
@@ -75,33 +103,11 @@ def resolve_version(repo_path: str, branch: Optional[str] = None) -> str:
     else:
         try:
             import git
-            import tempfile
 
             abs_path = os.path.abspath(repo_path)
             real_path = os.path.realpath(abs_path)
 
-            # Security Sanitizer: Prevent path injection/traversal
-            # Explicit string-literal checking for CodeQL compliance
-            is_valid = False
-
-            # Check absolute literal prefixes
-            if real_path == "/repo" or real_path.startswith("/repo/"):
-                is_valid = True
-            elif real_path == "/shared" or real_path.startswith("/shared/"):
-                is_valid = True
-            else:
-                # Resolve active working directory and temp directory safely
-                cwd_dir = os.path.realpath(os.getcwd())
-                cwd_dir_slash = cwd_dir if cwd_dir.endswith(os.path.sep) else cwd_dir + os.path.sep
-                temp_dir = os.path.realpath(tempfile.gettempdir())
-                temp_dir_slash = temp_dir if temp_dir.endswith(os.path.sep) else temp_dir + os.path.sep
-
-                if real_path == cwd_dir or real_path.startswith(cwd_dir_slash):
-                    is_valid = True
-                elif real_path == temp_dir or real_path.startswith(temp_dir_slash):
-                    is_valid = True
-
-            if not is_valid:
+            if not _is_within_allowed_root(real_path):
                 return str(int(datetime.utcnow().timestamp()))
 
             if os.path.exists(real_path):
@@ -112,33 +118,12 @@ def resolve_version(repo_path: str, branch: Optional[str] = None) -> str:
 
     return str(int(datetime.utcnow().timestamp()))
 
+
 def is_safe_path(path: str) -> bool:
     """Check if the resolved path is within permitted directories."""
-    try:
-        import tempfile
-        # Resolve real absolute path
-        abs_path = os.path.abspath(path)
-        real_path = os.path.realpath(abs_path)
-
-        # Explicit string-literal checking for CodeQL compliance
-        if real_path == "/repo" or real_path.startswith("/repo/"):
-            return True
-        if real_path == "/shared" or real_path.startswith("/shared/"):
-            return True
-
-        cwd_dir = os.path.realpath(os.getcwd())
-        cwd_dir_slash = cwd_dir if cwd_dir.endswith(os.path.sep) else cwd_dir + os.path.sep
-        temp_dir = os.path.realpath(tempfile.gettempdir())
-        temp_dir_slash = temp_dir if temp_dir.endswith(os.path.sep) else temp_dir + os.path.sep
-
-        if real_path == cwd_dir or real_path.startswith(cwd_dir_slash):
-            return True
-        if real_path == temp_dir or real_path.startswith(temp_dir_slash):
-            return True
-
+    if not path:
         return False
-    except Exception:
-        return False
+    return _is_within_allowed_root(path)
 
 async def find_best_version(version: str, db: AsyncSession) -> str:
     """Find the requested version or the closest parsed/existing version in the database."""
@@ -1322,6 +1307,9 @@ async def open_editor(payload: dict):
     import subprocess
     import os
 
+    if not is_safe_path(file_path):
+        raise HTTPException(status_code=400, detail="Unauthorized or unsafe file path")
+
     # Normalize and ensure the path stays within a trusted base directory.
     base_dir = os.path.realpath(os.getcwd())
     normalized_path = os.path.realpath(file_path)
@@ -1340,8 +1328,8 @@ async def open_editor(payload: dict):
         else:
             subprocess.run(["xdg-open", normalized_path], check=True)
         return {"status": "success"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to open file: {str(e)}")
+    except Exception:
+        raise HTTPException(status_code=500, detail="Failed to open file")
 
 @app.get("/api/references")
 async def find_references(symbol_id: str, version: str, db: AsyncSession = Depends(get_db)):
