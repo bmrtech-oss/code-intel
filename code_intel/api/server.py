@@ -3,8 +3,8 @@ import re
 import json
 from pathlib import Path
 from ..utils.traceability import fuzzy_match_symbols
-from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks, Response, Body
-from fastapi.responses import StreamingResponse
+from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks, Response, Body, Request
+from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, List
@@ -21,6 +21,13 @@ from ..worker.tasks import queue, llm_queue, run_ingestion, generate_requirement
 from ..settings import ALLOWED_ORIGINS
 
 app = FastAPI(title="Code Intelligence Platform (Prod)", version="1.0.0")
+
+@app.exception_handler(PermissionError)
+async def permission_error_handler(request: Request, exc: PermissionError):
+    return JSONResponse(
+        status_code=400,
+        content={"detail": str(exc)},
+    )
 
 origins = list(ALLOWED_ORIGINS)
 common_origins = [
@@ -120,11 +127,13 @@ def resolve_version(repo_path: str, branch: Optional[str] = None) -> str:
 
             safe_repo_path = _resolve_allowed_path(repo_path)
             if not safe_repo_path:
-                return str(int(datetime.utcnow().timestamp()))
+                raise PermissionError("Unsafe repository path")
 
             if os.path.exists(safe_repo_path):
                 repo = git.Repo(safe_repo_path)
                 return repo.head.commit.hexsha
+        except PermissionError as pe:
+            raise pe
         except Exception as e:
             print(f"Error resolving local Git version: {e}")
 
@@ -543,7 +552,7 @@ async def get_branches_and_commits(repo_path: str, branch: Optional[str] = None,
                 resolved_path = os.path.realpath(os.path.join(safe_root, actual_path))
 
         if not is_safe_path(resolved_path):
-            raise HTTPException(status_code=400, detail="Invalid or unauthorized repository path")
+            raise PermissionError("Invalid or unauthorized repository path")
 
         if os.path.exists(resolved_path):
             repo = git.Repo(resolved_path)
@@ -871,6 +880,12 @@ async def get_graph(version: str, response: Response, level: str = "file", focus
             db_edges = [dict(row) for row in result.mappings()]
         except Exception:
             pass
+
+    # Normalize file paths of db_nodes to remove any /tmp/codeintel_XXXXXX/ prefix and standardise backslashes
+    for n in db_nodes:
+        if n.get("file"):
+            fp = n["file"].replace("\\", "/")
+            n["file"] = re.sub(r"^/tmp/codeintel_[a-zA-Z0-9_]+/", "", fp)
 
     nodes = []
     edges = []

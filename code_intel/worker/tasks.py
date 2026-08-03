@@ -1,12 +1,60 @@
 import os
 import asyncio
 from redis import Redis
-from rq import Queue, get_current_job
-from temporalio import workflow, activity
-from temporalio.client import Client
 from datetime import timedelta
 from ..core.storage import VersionedStorage, AsyncSessionLocal
 from ..core.ingestion import IngestionPipeline
+
+try:
+    from rq import Queue, get_current_job
+except Exception:
+    class Queue:
+        def __init__(self, name, connection=None):
+            self.name = name
+            self.connection = connection
+
+        def enqueue(self, *args, **kwargs):
+            return None
+
+        def fetch_job(self, *args, **kwargs):
+            return None
+
+    def get_current_job():
+        return None
+
+try:
+    from temporalio import workflow, activity
+    from temporalio.client import Client
+except Exception:
+    class _ActivityStub:
+        @staticmethod
+        def defn(fn):
+            return fn
+
+    class _WorkflowStub:
+        @staticmethod
+        def defn(cls):
+            return cls
+
+        @staticmethod
+        def run(fn):
+            return fn
+
+        class RetryPolicy:
+            def __init__(self, *args, **kwargs):
+                pass
+
+        @staticmethod
+        async def execute_activity(*args, **kwargs):
+            raise RuntimeError("temporalio is not available")
+
+    class Client:
+        @classmethod
+        async def connect(cls, *args, **kwargs):
+            raise RuntimeError("temporalio is not available")
+
+    workflow = _WorkflowStub()
+    activity = _ActivityStub()
 
 redis_conn = Redis(host=os.getenv("REDIS_HOST", "redis"), port=6379)
 queue = Queue("ingestion", connection=redis_conn)

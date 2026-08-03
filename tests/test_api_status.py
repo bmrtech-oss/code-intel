@@ -220,6 +220,43 @@ def test_get_repo_tree():
     finally:
         app.dependency_overrides.clear()
 
+def test_get_graph_path_normalization():
+    client = TestClient(app)
+
+    mock_db = MagicMock()
+    mock_execute = AsyncMock()
+    mock_db.execute = mock_execute
+
+    mock_nodes_result = MagicMock()
+    mock_nodes_result.mappings.return_value = [
+        {"fqn": "starter_repo.plot_data.read_csv_data", "kind": "function", "file": "/tmp/codeintel_gn0t226s/starter_repo/plot_data.py"},
+        {"fqn": "src.main.main", "kind": "function", "file": "/tmp/codeintel_4mtsyun5/src/main.py"}
+    ]
+    mock_edges_result = MagicMock()
+    mock_edges_result.mappings.return_value = [
+        {"from_fqn": "read_csv_data", "to_fqn": "main"}
+    ]
+
+    mock_execute.side_effect = [mock_nodes_result, mock_edges_result]
+
+    async def override_get_db():
+        yield mock_db
+
+    app.dependency_overrides[get_db] = override_get_db
+
+    try:
+        response = client.get("/graph?version=sha-123&level=file")
+        assert response.status_code == 200
+        data = response.json()
+        assert "nodes" in data
+        assert "edges" in data
+        assert {n["id"] for n in data["nodes"]} == {"file:starter_repo/plot_data.py", "file:src/main.py"}
+        assert len(data["edges"]) == 1
+        assert data["edges"][0]["source"] == "file:starter_repo/plot_data.py"
+        assert data["edges"][0]["target"] == "file:src/main.py"
+
+    finally:
+        app.dependency_overrides.clear()
 def test_get_graph_suffix_resolution_all_level_unqualified_names():
     client = TestClient(app)
 
