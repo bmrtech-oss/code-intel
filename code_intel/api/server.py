@@ -66,7 +66,13 @@ def _resolve_allowed_path(path: str) -> Optional[str]:
         if not path or "\x00" in path:
             return None
 
-        candidate = Path(os.path.abspath(path)).resolve(strict=False)
+        # Reject URL-like inputs here; only local filesystem paths are allowed.
+        if is_git_url(path):
+            return None
+
+        # Canonicalize user input before constructing a Path object.
+        normalized_input = os.path.normpath(os.path.expanduser(path))
+        candidate = Path(os.path.abspath(normalized_input)).resolve(strict=False)
         app_temp_root = (Path(tempfile.gettempdir()) / "code_intel").resolve(strict=False)
         allowed_roots = [
             Path("/repo").resolve(strict=False),
