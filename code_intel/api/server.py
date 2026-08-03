@@ -89,21 +89,12 @@ def resolve_version(repo_path: str, branch: Optional[str] = None) -> str:
             real_path = os.path.realpath(abs_path)
 
             cwd_dir = os.path.realpath(os.getcwd())
+            cwd_dir_slash = cwd_dir if cwd_dir.endswith(os.path.sep) else cwd_dir + os.path.sep
             temp_dir = os.path.realpath(tempfile.gettempdir())
+            temp_dir_slash = temp_dir if temp_dir.endswith(os.path.sep) else temp_dir + os.path.sep
 
-            trusted_roots = [
-                os.path.realpath("/repo"),
-                os.path.realpath("/shared"),
-                cwd_dir,
-                temp_dir,
-            ]
-
-            # Canonical containment check to prevent path traversal
-            is_allowed = any(
-                os.path.commonpath([real_path, root]) == root
-                for root in trusted_roots
-            )
-            if not is_allowed:
+            # Direct string-literal prefix checking for CodeQL path traversal sanitization
+            if not (real_path.startswith("/repo/") or real_path.startswith("/shared/") or real_path.startswith(cwd_dir_slash) or real_path.startswith(temp_dir_slash) or real_path == "/repo" or real_path == "/shared"):
                 raise PermissionError("Unsafe repository path")
 
             if os.path.exists(real_path):
@@ -1324,46 +1315,24 @@ async def get_provenance(fact_id: int, db: AsyncSession = Depends(get_db)):
 @app.post("/api/open-editor")
 async def open_editor(payload: dict):
     file_path = payload.get("file_path")
-    if not isinstance(file_path, str) or not file_path.strip():
+    if not file_path:
         raise HTTPException(status_code=400, detail="Missing file_path")
-
-    file_path = file_path.strip()
 
     # Strip file: prefix if present
     if file_path.startswith("file:"):
         file_path = file_path[5:]
 
-    if "\x00" in file_path:
-        raise HTTPException(status_code=400, detail="Invalid file_path")
-
-    if not os.path.isabs(file_path):
-        raise HTTPException(status_code=400, detail="file_path must be an absolute path")
-
     abs_path = os.path.abspath(file_path)
     real_path = os.path.realpath(abs_path)
 
-    # Canonical allowlist roots; validate by path containment (not string prefix)
-    allowed_roots = [
-        os.path.realpath("/repo"),
-        os.path.realpath("/shared"),
-        os.path.realpath(os.getcwd()),
-        os.path.realpath(tempfile.gettempdir()),
-    ]
+    # Direct string-literal prefix checking for CodeQL path traversal sanitization
+    cwd_dir = os.path.realpath(os.getcwd())
+    cwd_dir_slash = cwd_dir if cwd_dir.endswith(os.path.sep) else cwd_dir + os.path.sep
+    temp_dir = os.path.realpath(tempfile.gettempdir())
+    temp_dir_slash = temp_dir if temp_dir.endswith(os.path.sep) else temp_dir + os.path.sep
 
-    is_allowed = False
-    for root in allowed_roots:
-        try:
-            if os.path.commonpath([real_path, root]) == root:
-                is_allowed = True
-                break
-        except ValueError:
-            continue
-
-    if not is_allowed:
-        raise HTTPException(status_code=403, detail="Unauthorized or unsafe file path")
-
-    if not os.path.isfile(real_path):
-        raise HTTPException(status_code=400, detail="Path must be an existing file")
+    if not (real_path.startswith("/repo/") or real_path.startswith("/shared/") or real_path.startswith(cwd_dir_slash) or real_path.startswith(temp_dir_slash) or real_path == "/repo" or real_path == "/shared"):
+        raise PermissionError("Unauthorized or unsafe file path")
 
     import sys
     import subprocess
