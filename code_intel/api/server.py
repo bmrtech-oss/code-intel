@@ -1323,13 +1323,23 @@ async def open_editor(payload: dict):
     import subprocess
     import os
 
+    # Normalize and ensure the path stays within a trusted base directory.
+    base_dir = os.path.abspath(os.getcwd())
+    normalized_path = os.path.abspath(file_path)
+    try:
+        if os.path.commonpath([base_dir, normalized_path]) != base_dir:
+            raise HTTPException(status_code=400, detail="Unauthorized or unsafe file path")
+    except ValueError:
+        # Handles mixed-drive or invalid path scenarios on some platforms.
+        raise HTTPException(status_code=400, detail="Unauthorized or unsafe file path")
+
     try:
         if sys.platform == "win32":
-            os.startfile(file_path)
+            os.startfile(normalized_path)
         elif sys.platform == "darwin":
-            subprocess.run(["open", file_path], check=True)
+            subprocess.run(["open", normalized_path], check=True)
         else:
-            subprocess.run(["xdg-open", file_path], check=True)
+            subprocess.run(["xdg-open", normalized_path], check=True)
         return {"status": "success"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to open file: {str(e)}")
