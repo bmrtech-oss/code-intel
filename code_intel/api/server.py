@@ -64,8 +64,11 @@ def _resolve_allowed_path(path: str) -> Optional[str]:
         import tempfile
 
         if not path or "\x00" in path:
-        app_temp_root = (Path(tempfile.gettempdir()) / "code_intel").resolve(strict=False)
             return None
+
+        candidate = Path(os.path.abspath(path)).resolve(strict=False)
+        app_temp_root = (Path(tempfile.gettempdir()) / "code_intel").resolve(strict=False)
+        allowed_roots = [
             Path("/repo").resolve(strict=False),
             Path("/shared").resolve(strict=False),
             app_temp_root,
@@ -73,12 +76,8 @@ def _resolve_allowed_path(path: str) -> Optional[str]:
             Path(os.path.realpath(tempfile.gettempdir())).resolve(strict=False),
         ]
 
-                candidate.relative_to(root)
-        relative_input = str(path).lstrip("/\\")
-
         for root in allowed_roots:
             try:
-                candidate = (root / relative_input).resolve(strict=False)
                 candidate.relative_to(root)
                 return str(candidate)
             except ValueError:
